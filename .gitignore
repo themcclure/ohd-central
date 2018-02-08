@@ -105,5 +105,8 @@ venv.bak/
 # mypy
 .mypy_cache/
 
-# credentials files not to be shared
-service-account.json
+# credentials
+/ohd/service-account.json
+
+# IDE
+/.idea
