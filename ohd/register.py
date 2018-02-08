@@ -12,18 +12,19 @@ import official
 # TODO: add two new arguments, max_docs returned and starting_location, in case this ever gets too big
 # TODO: parameterize this a bit more rather than pasting in the values in the def line
 # TODO: retool this as either load_register_by_id / _url or add it as a param
-def load_register(doc_id='1wsMCWX-HLvlsQwURaMU7Zszf6loM0DazDWA8NaZ2xxE', tab_name='History Register', id_col_num=5):
+def load_register(doc_id='1wsMCWX-HLvlsQwURaMU7Zszf6loM0DazDWA8NaZ2xxE',tab_name='History Register',id_col_num=5,cred_file='./service-account.json'):
     """
     Opens a History Register google document, with a specified Google Sheet ID, and loads the doc IDs from the specified column.
     By default this will load the central OffCom History Register.
     :param doc_id: Google Sheet ID of the History Register
     :param tab_name: Google Sheet ID of the History Register
     :param id_col_num: The column in the Register that contains the Google Sheet IDs of the individual history docs
+    :param cred_file: The JSON file with the service account credentials in it
     :return: A list of loaded history docs
     """
 
     start = datetime.datetime.now()
-    gc = util.authenticate_with_google()
+    gc = util.authenticate_with_google(cred_file)
 
     # Open the History Register
     register = gc.open_by_key(doc_id)
@@ -70,7 +71,7 @@ def load_register(doc_id='1wsMCWX-HLvlsQwURaMU7Zszf6loM0DazDWA8NaZ2xxE', tab_nam
 
 if __name__ == '__main__':
     start = datetime.datetime.now()
-    o = load_register()
-    print u'Officials loaded, there are {} in the list, for a total of {} games'.format(len(o), reduce(lambda x, y: x+y, [x.game_count for x in o]))
+    o = load_register(cred_file='../service-account.json')
+    print u'Officials loaded, there are {} in the list, for a total of {} games'.format(len(o), reduce(lambda x, y: x+y, [len(x.games) for x in o]))
     # print u'Officials loaded, there are {} in the list'.format(len(o))
     print u'Full processing took {}'.format(datetime.datetime.now() - start)

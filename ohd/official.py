@@ -53,13 +53,17 @@ class Official:
         games.sort(reverse=True)
         # Iterate through games, one at a time until there's no more
         for game in games:
-            # TODO: validate the input data and form a Game, then add it to the Official
             try:
                 # Validation: Is it a date?
                 gdate = datetime.datetime.strptime(game[0], '%Y-%m-%d').date()
-
                 # print u'Date for the game is {}.'.format(datetime.datetime.strptime(game[0], '%Y-%m-%d').date())
-                self.add_game(game)
+                assn = game[6]
+                gtype = game[7]
+                role = game[8]
+                role_secondary = game[9]
+                software = game[10]
+                self.add_game(Game(gdate, assn, gtype, role, role_secondary, software, game))
+                # TODO: Calculate Positions as a separate class? Or is that just a query result?
             except Exception as e:
                 # This game isn't valid, go to the next one
                 print u'Game not valid because: {}'.format(e)
@@ -84,28 +88,45 @@ class Official:
 class Game:
     """
     Each official will have a history made up of many games
-    Note:
-        Age is the the number of whole years since the reference date (freezeDate)
-        Primacy is 1 for games worked in the primary position, 2 for secondary positions
     """
-    def __init__(self, gdate, assn, gtype, role, primacy):
+    def __init__(self, gdate, assn, gtype, role, role_secondary, software, raw_row):
         # default "error" values
         self.assn = None
         self.type = None
         self.role = None
         self.gdate = None
-        self.primacy = None
+        self.role_secondary = None
+        self.software = None
+        self.standard = False
+        self.raw_row = list()
 
-        # if all the inputs are valid, then populate the data
-        if (assn in assns) and (gtype in types) and (role in roles) and (isinstance(gdate, datetime.date)) and (primacy in (1,2)):
-            self.assn = assn
-            self.type = gtype
-            self.role = role
-            # self.age = age
-            self.gdate = gdate
-            self.primacy = primacy
-        else:
-            raise Exception('Validation of inputs failed... What? Too lazy to check the inputs for validity??')
+        # If the date is valid, then populate the data as supplied
+        if not isinstance(gdate, datetime.date):
+            raise Exception('Game Date is not a datetime :{}'.format(gdate))
+        if not isinstance(raw_row, list):
+            raise Exception('Game data is not a list, instead it\'s a {}'.format(type(raw_row)))
+
+        self.gdate = gdate
+        self.assn = assn
+        self.type = gtype
+        self.role = role
+        if len(role_secondary) > 0 and (role_secondary in roles):
+            self.role_secondary = role_secondary
+        self.software = software
+        self.raw_row = raw_row
+        self.standard = True
+        # self.age = age
+
+        # If any of the data is not "standard" then mark the game as non-standard
+        if not assn in assns:
+            self.standard = False
+        if not gtype in types:
+            self.standard = False
+        if not role in roles:
+            self.standard = False
 
     def __repr__(self):
-        return "<Assn %s, Role %s>" % (self.assn, self.role)
+        if self.standard:
+            return u'<Assn {}, Role {}>'.format(self.assn, self.role)
+        else:
+            return u'<Assn {}, Role {}, non-std>'.format(self.assn, self.role)

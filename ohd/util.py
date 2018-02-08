@@ -7,14 +7,14 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 
-def authenticate_with_google():
+def authenticate_with_google(cred_file):
     """
     Authenticate the service account with google and return a credentialed connection.
     :return: Authorized gspread connection
     """
     scope = ['https://spreadsheets.google.com/feeds']
 
-    credentials = ServiceAccountCredentials.from_json_keyfile_name('service-account.json', scope)
+    credentials = ServiceAccountCredentials.from_json_keyfile_name(cred_file, scope)
 
     return gspread.authorize(credentials)
 
