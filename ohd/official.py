@@ -16,11 +16,10 @@ class Official:
     """The basic official object.
     Contains data about that official, and the set of games they've worked.
     It contains:
-        a list of Games officiated:
-            note that secondary positions officiated count here
-        the processed weighting in each role (and NSO family), including secondary positions
+        a list of Games officiated
+        a list of Positions officiated
+        a list of Events officiated
     """
-
     def __init__(self, doc_id):
         # basic stats/info about the official
         self.key = doc_id
@@ -30,40 +29,44 @@ class Official:
         self.refcert = 0
         self.nsocert = 0
         self.games = []
-        # TODO: the game counts become complex, so maybe don't precache them and calculate them each time, with flags for game/position and role/fam?
-        self.game_count = 0
-        self.position_count = 0
-        self.ref_position_count = 0
-        self.nso_position_count = 0
+        self.positions = []
+        self.secondary_positions = []
+        # TODO: the game counts become complex, so maybe don't pre-cache them and calculate them each time, with flags for game/position and role/fam?
+        # self.game_count = 0
+        # self.position_count = 0
+        # self.ref_position_count = 0
+        # self.nso_position_count = 0
         # self.weighting = {}
         # self.qualified_games = {}
 
     def __repr__(self):
-        return u'<name: %r, refcert %d, nsocert: %d, games %d>'.format(self.pref_name, self.refcert, self.nsocert, self.game_count)
+        return u'<name: {}, refcert {}, nsocert: {}, games {}>'.format(self.pref_name, self.refcert, self.nsocert,
+                                                                       len(self.games))
 
-    def add_games(self, history_tab):
+    def add_history(self, history_tab):
         """
         Takes the entire Game History tab and runs through it, adding each game to the Official
         :param history_tab: opened Game History tab
         :return: None
         """
         # Get all the rows apart from the top line (header)
-        games = history_tab.get_all_values()[1:]
+        history = history_tab.get_all_values()[1:]
         # Sort list by date (descending)
-        games.sort(reverse=True)
-        # Iterate through games, one at a time until there's no more
-        for game in games:
+        history.sort(reverse=True)
+        # Iterate through the official's history, one at a time until there's no more
+        for item in history:
             try:
                 # Validation: Is it a date?
-                gdate = datetime.datetime.strptime(game[0], '%Y-%m-%d').date()
+                gdate = datetime.datetime.strptime(item[0], '%Y-%m-%d').date()
                 # print u'Date for the game is {}.'.format(datetime.datetime.strptime(game[0], '%Y-%m-%d').date())
-                assn = game[6]
-                gtype = game[7]
-                role = game[8]
-                role_secondary = game[9]
-                software = game[10]
-                self.add_game(Game(gdate, assn, gtype, role, role_secondary, software, game))
+                assn = item[6]
+                gtype = item[7]
+                role = item[8]
+                role_secondary = item[9]
+                software = item[10]
+                self.add_game(Game(gdate, assn, gtype, role, role_secondary, software, item))
                 # TODO: Calculate Positions as a separate class? Or is that just a query result?
+                # TODO: Event based experience
             except Exception as e:
                 # This game isn't valid, go to the next one
                 print u'Game not valid because: {}'.format(e)
@@ -75,14 +78,27 @@ class Official:
         :param game: game row
         :return: None
         """
+        # Add the Game to the history
         self.games.append(game)
-        self.game_count += 1
-        # if game.primacy == 1:
-        #     self.position_count += 1
-        #     if game.role in config.ref_roles:
-        #         self.ref_tally += 1
-        #     elif game.role in config.nso_roles:
-        #         self.nso_tally += 1
+
+        # Add the primary Position to the history
+        self.positions.append(game)
+        # Add the primary Position to the history (if there was one)
+        if game.role_secondary:
+            self.secondary_positions.append(game)
+
+    # TODO: how to handle age? Add it to the filter_map and pop it out before the for loop? Ask for start and end date? As for start date and period (year) and split the results as a list based on the number of periods there are?
+    def get_games(self, filter_map={}):
+        """
+        Returns a list of Games, that meet the criteria in the provided filter_map.
+        :param filter_map: A dict of property: list of values to select if matched
+        :return: a list of Games
+        """
+        proto_list = self.games
+        # iterate through each element in the filter_map, and filter on the values
+        for item in filter_map.keys():
+            proto_list = [i for i in proto_list if getattr(i, item) in filter_map[item]]
+        return proto_list
 
 
 class Game:
@@ -118,11 +134,11 @@ class Game:
         # self.age = age
 
         # If any of the data is not "standard" then mark the game as non-standard
-        if not assn in assns:
+        if assn not in assns:
             self.standard = False
-        if not gtype in types:
+        if gtype not in types:
             self.standard = False
-        if not role in roles:
+        if role not in roles:
             self.standard = False
 
     def __repr__(self):

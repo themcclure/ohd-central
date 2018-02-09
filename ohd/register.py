@@ -12,10 +12,11 @@ import official
 # TODO: add two new arguments, max_docs returned and starting_location, in case this ever gets too big
 # TODO: parameterize this a bit more rather than pasting in the values in the def line
 # TODO: retool this as either load_register_by_id / _url or add it as a param
-def load_register(doc_id='1wsMCWX-HLvlsQwURaMU7Zszf6loM0DazDWA8NaZ2xxE',tab_name='History Register',id_col_num=5,cred_file='./service-account.json'):
+def load_register(doc_id='1wsMCWX-HLvlsQwURaMU7Zszf6loM0DazDWA8NaZ2xxE', tab_name='History Register', id_col_num=5,
+                  cred_file='./service-account.json'):
     """
-    Opens a History Register google document, with a specified Google Sheet ID, and loads the doc IDs from the specified column.
-    By default this will load the central OffCom History Register.
+    Opens a History Register google document, with a specified Google Sheet ID, and loads the doc IDs from the specified
+    column. By default this will load the central OffCom History Register.
     :param doc_id: Google Sheet ID of the History Register
     :param tab_name: Google Sheet ID of the History Register
     :param id_col_num: The column in the Register that contains the Google Sheet IDs of the individual history docs
@@ -32,13 +33,14 @@ def load_register(doc_id='1wsMCWX-HLvlsQwURaMU7Zszf6loM0DazDWA8NaZ2xxE',tab_name
 
     # Collect the list of Google Sheet IDs for the officials in the Register
     doc_ids = register_tab.col_values(id_col_num)
+    doc_ids = filter(None, doc_ids[1:])  # remove header and blank entries from the list
     first = datetime.datetime.now()
     print u'Getting list of Register IDs took {}'.format(first - start)
     step = datetime.datetime.now()
 
-    # Go through the list of Google Sheet IDs and load each one in turn, skipping the header row
+    # Go through the list of Google Sheet IDs and load each one in turn
     officials = list()
-    for doc in doc_ids[1:]:
+    for doc in doc_ids:
         try:
             history = gc.open_by_key(doc)
             ver = util.get_version(history)
@@ -53,12 +55,12 @@ def load_register(doc_id='1wsMCWX-HLvlsQwURaMU7Zszf6loM0DazDWA8NaZ2xxE',tab_name
             off.derby_name = unicode(derby_name)
             off.legal_name = unicode(legal_name)
             # TODO: add normalized cert and other data
-            off.add_games(history.worksheet('Game History'))
+            off.add_history(history.worksheet('Game History'))
 
             officials.append(off)
 
             # profiling and testing/verification section
-            print u'Loading {} took {}'.format(off.pref_name,datetime.datetime.now() - step)
+            print u'Loading {} took {}'.format(off.pref_name, datetime.datetime.now() - step)
             step = datetime.datetime.now()
         except gspread.exceptions.GSpreadException as e:
             print u"Can't open {} because {}".format(doc, e.message)
