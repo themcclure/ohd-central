@@ -1,0 +1,4 @@
+# Code snippet for interacting with the loaded Official objects
+import ohd
+o = ohd.load_register()
+

@@ -54,7 +54,10 @@ def load_register(doc_id='1wsMCWX-HLvlsQwURaMU7Zszf6loM0DazDWA8NaZ2xxE', tab_nam
             off.pref_name = unicode(pref_name)
             off.derby_name = unicode(derby_name)
             off.legal_name = unicode(legal_name)
-            # TODO: add normalized cert and other data
+            profile_tab = history.worksheet('Profile')
+            off.refcert = util.normalize_cert(profile_tab.acell('B8').value)
+            off.nsocert = util.normalize_cert(profile_tab.acell('B10').value)
+            # TODO: add other data
             off.add_history(history.worksheet('Game History'))
 
             officials.append(off)
