@@ -4,6 +4,7 @@ List of known Associations, Game Types and Roles
 """
 __author__ = 'hammer'
 
+# TODO: If these values can be instead pulled like from the core history template, code and template would 100% be in sync
 assns = ['WFTDA', 'MRDA', 'JRDA', 'Other']
 types = ['Champs', 'Playoff', 'Sanc', 'Reg', 'National', 'Other']
 ref_roles = ['THR', 'ATHR', 'CHR', 'HR', 'IPR', 'JR', 'OPR', 'ALTR']

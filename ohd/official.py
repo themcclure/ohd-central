@@ -30,7 +30,7 @@ class Official:
         self.nsocert = 0
         self.games = []
         self.positions = []
-        self.events = []
+        self.events = dict()
         # TODO: the game counts become complex, so maybe don't pre-cache them and calculate them each time, with flags for game/position and role/fam?
         # self.game_count = 0
         # self.position_count = 0
@@ -40,8 +40,8 @@ class Official:
         # self.qualified_games = {}
 
     def __repr__(self):
-        return u'<name: {}, refcert {}, nsocert: {}, games {}>'.format(self.pref_name, self.refcert, self.nsocert,
-                                                                       len(self.games))
+        return '<name: {}, refcert {}, nsocert: {}, games {}>'.format(self.pref_name.encode('utf-8', 'ignore'),
+                                                                       self.refcert, self.nsocert, len(self.games))
 
     def add_history(self, history_tab):
         """
@@ -56,24 +56,17 @@ class Official:
         # Iterate through the official's history, one at a time until there's no more
         for item in history:
             try:
-                # Validation: Is it a date?
+                # Validation: Is it a valid date?
                 gdate = datetime.datetime.strptime(item[0], '%Y-%m-%d').date()
                 # print u'Date for the game is {}.'.format(datetime.datetime.strptime(game[0], '%Y-%m-%d').date())
-                assn = item[6]
-                gtype = item[7]
-                role = item[8]
-                role_secondary = item[9]
-                software = item[10]
-                self.add_game(Game(gdate, assn, gtype, role, role_secondary, software, item))
-                # TODO: Calculate Positions as a separate class? Or is that just a query result?
-                # TODO: Event based experience
+                self.add_game(Game(gdate, item))
             except Exception as e:
                 # This game isn't valid, go to the next one
                 print u'Game not valid because: {}'.format(e)
 
     def add_game(self, game):
         """
-        Adds a Game to the official's history. Also triggers adding of Positions and Events relating to that Game
+        Adds a Game to the official's history. Also triggers adding the Positions and Events relating to that Game
         :param game: Game object
         :return: None
         """
@@ -84,21 +77,32 @@ class Official:
         self.add_position(game)
 
         # Add the Events for this Game to the history
-        # TODO: self.add_event(game)
+        self.add_event(game)
 
     def add_position(self, game):
         """
         Adds Positions (primary and secondary) to the official's history.
         Triggered by add_game() and not expected to be run outside of that context.
         :param game: Game object
-        :return:
         """
         # Add the primary Position to the history
-        self.positions.append(Position(game.gdate, game.assn, game.type, game.role, 'p', game.software, game.raw_row))
+        self.positions.append(Position(game, 'p'))
         # Add the secondary Position to the history (if there was one)
         if game.role_secondary:
-            self.positions.append(
-                Position(game.gdate, game.assn, game.type, game.role_secondary, 's', game.software, game.raw_row))
+            self.positions.append(Position(game, 's'))
+
+    def add_event(self, game):
+        """
+        Adds an Event to the officials' history. Also, if the event already exists, increments the number of games counter.
+        Triggered by add_game() and not expected to be run outside of that context.
+        :param game: Game object
+        """
+        if not game.event_name:
+            return
+        if game.event_name not in self.events.keys():
+            self.events[game.event_name] = Event(game.event_name, game)
+        else:
+            self.events[game.event_name].num_games += 1
 
     # TODO: how to handle age? Add it to the filter_map and pop it out before the for loop? Ask for start and end date? As for start date and period (year) and split the results as a list based on the number of periods there are?
     def query_history(self, scope, filter_map=None):
@@ -109,7 +113,7 @@ class Official:
         :return: a list of Games
         """
         if filter_map is None:
-            filter_map = []
+            filter_map = dict()
 
         try:
             proto_list = getattr(self, scope)
@@ -126,36 +130,32 @@ class Game:
     Each official will have a history made up of many Games, which store the relevant information about each game.
     Each Game can have one or two Positions and may have one Event (recorded separately).
     """
-    def __init__(self, gdate, assn, gtype, role, role_secondary, software, raw_row):
+    # TODO: figure out how to differentiate game vs event based roles... eg a TH isn't a Game per-se but it IS an event based Position...
+    def __init__(self, gdate, raw_row):
         # default "error" values
-        self.gdate = None
-        self.assn = None
-        self.type = None
-        self.role = None
-        self.role_secondary = None
-        self.software = None
-        self.standard = False
-        self.raw_row = list()
+        self.standard = True
 
         # If the date is valid, then populate the data as supplied
         if not isinstance(gdate, datetime.date):
-            raise Exception('Game Date is not a datetime :{}'.format(gdate))
+            raise Exception('Game Date is not a datetime: {}'.format(gdate))
+        self.gdate = gdate
         # Is the raw list is actually a list, as expected
         if not isinstance(raw_row, list):
             raise Exception('Game data is not a list, instead it\'s a {}'.format(type(raw_row)))
-
-        self.gdate = gdate
-        self.assn = assn
-        self.type = gtype
-        self.role = role
-        if len(role_secondary) > 0 and (role_secondary in roles):
-            self.role_secondary = role_secondary
-        self.software = software
         self.raw_row = raw_row
-        self.standard = True
-        # self.age = age
 
-        # If any of the data is not "standard" then mark the game as non-standard
+        # validate the vital stuff
+        assn = unicode(raw_row[6].strip())
+        gtype = unicode(raw_row[7].strip())
+        role = unicode(raw_row[8].strip())
+        if assn and gtype and role:
+            self.assn = assn
+            self.type = gtype
+            self.role = role
+        else:
+            raise Exception('Association, Type and/or Role is empty: {}'.format([raw_row[0]]+raw_row[6:9]))
+
+        # If any of the vital data is not "standard" then mark the game as non-standard
         if assn not in assns:
             self.standard = False
         if gtype not in types:
@@ -163,11 +163,23 @@ class Game:
         if role not in roles:
             self.standard = False
 
+        # non-vital stuff, just record what they write
+        self.role_secondary = unicode(raw_row[9].strip())
+        if self.role_secondary  and self.role_secondary not in roles:
+            self.standard = False
+
+        self.software = unicode(raw_row[10].strip())
+        # TODO: add valid software options to config and check them here
+
+        self.event_name = raw_row[1]
+        self.event_location = unicode(raw_row[2].strip())
+        self.event_host = (raw_row[3].strip())
+
     def __repr__(self):
         if self.standard:
-            return u'<Game: Assn {}, Role {}>'.format(self.assn, self.role)
+            return '<Game: Assn {}, Role {}>'.format(self.assn, self.role)
         else:
-            return u'<Game: Assn {}, Role {}, non-std>'.format(self.assn, self.role)
+            return '<Game: Assn {}, Role {}, non-std>'.format(self.assn, self.role)
 
 
 class Position:
@@ -175,46 +187,37 @@ class Position:
     Each official will have a history made up of many Positions worked, each of which store the relevant information
     about the game. Each Position can be primary or secondary.
     """
-    def __init__(self, gdate, assn, gtype, role, primacy, software, raw_row):
-        # default "error" values
-        self.gdate = None
-        self.assn = None
-        self.type = None
-        self.role = None
-        self.primacy = None
-        self.software = None
-        self.standard = False
-        self.raw_row = list()
-
-        # If the date is valid, then populate the data as supplied
-        if not isinstance(gdate, datetime.date):
-            raise Exception('Position Date is not a datetime :{}'.format(gdate))
-        # Is the primacy is correct
-        if primacy not in ['p', 's']:
-            raise Exception('Position Primacy is not a datetime :{}'.format(primacy))
-        # Is the raw list is actually a list, as expected
-        if not isinstance(raw_row, list):
-            raise Exception('Position data is not a list, instead it\'s a {}'.format(type(raw_row)))
-
-        self.gdate = gdate
-        self.assn = assn
-        self.type = gtype
-        self.role = role
+    def __init__(self, game, primacy):
+        self.gdate = game.gdate
+        self.assn = game.assn
+        self.type = game.type
+        self.role = game.role
+        self.software = game.software
+        self.standard = game.standard
         self.primacy = primacy
-        self.software = software
-        self.raw_row = raw_row
-        self.standard = True
-
-        # If any of the data is not "standard" then mark the game as non-standard
-        if assn not in assns:
-            self.standard = False
-        if gtype not in types:
-            self.standard = False
-        if role not in roles:
-            self.standard = False
+        self.raw_row = game.raw_row
 
     def __repr__(self):
         if self.standard:
-            return u'<Position: Assn {}, Role {}>'.format(self.assn, self.role)
+            return '<Position: Assn {}, Role {}>'.format(self.assn, self.role)
         else:
-            return u'<Position: Assn {}, Role {}, non-std>'.format(self.assn, self.role)
+            return '<Position: Assn {}, Role {}, non-std>'.format(self.assn, self.role)
+
+
+class Event:
+    """
+    Each official will have a history made up of many Events worked, each of which store the relevant information
+    about the game
+    """
+    def __init__(self, name, game):
+        self.name = name
+        self.num_games = 1
+        self.gdate = game.gdate  # TODO: or do we perhaps only really care about the year the event ran in?
+        self.assn = game.assn
+        self.type = game.type
+        # self.role = game.role
+        # self.standard = game.standard
+        self.raw_row = game.raw_row
+
+    def __repr__(self):
+        return '<Event: {} ({})>'.format(self.name.encode('utf-8', 'ignore'), self.gdate.year)
