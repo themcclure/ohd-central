@@ -105,24 +105,31 @@ class Official:
             self.events[game.event_name].num_games += 1
 
     # TODO: how to handle age? Add it to the filter_map and pop it out before the for loop? Ask for start and end date? As for start date and period (year) and split the results as a list based on the number of periods there are?
-    def query_history(self, scope, filter_map=None):
+    def query_history(self, scope, filter_map_include=None, filter_map_exclude=None):
         """
-        Returns a list of Games, that meet the criteria in the provided filter_map.
+        Returns a list of Games, that meet the criteria in the provided filter_maps. All Games are matched against the
+        include list first, then any Games matching against the exclude list are removed.
         :param scope: A text label, querying Games, Positions or Events
-        :param filter_map: A dict of { property: list of values } to select if matched
+        :param filter_map_include: A dict of { property: list of values } to select if matched
+        :param filter_map_exclude: A dict of { property: list of values } to remove if matched
         :return: a list of Games
         """
-        if filter_map is None:
-            filter_map = dict()
+        if filter_map_include is None:
+            filter_map_include = dict()
+        if filter_map_exclude is None:
+            filter_map_exclude = dict()
 
         try:
             proto_list = getattr(self, scope)
-            # iterate through each element in the filter_map, and filter on the values
-            for item in filter_map.keys():
-                proto_list = [i for i in proto_list if getattr(i, item) in filter_map[item]]
+            # iterate through each element in filter_map_include, and select the matching values
+            for item in filter_map_include.keys():
+                proto_list = [i for i in proto_list if getattr(i, item) in filter_map_include[item]]
+            # iterate through each element in filter_map_exclude, and remove the matching values
+            for item in filter_map_exclude.keys():
+                proto_list = [i for i in proto_list if hasattr(i,item) and getattr(i, item) not in filter_map_exclude[item]]
             return proto_list
         except Exception as e:
-            print u'History query failed. Scope: {}, Error: {}'.format(scope, e)
+            print u'History query failed. Scope: {}, Error: {}, Item was {}'.format(scope, e, i.raw_row)
 
 
 class Game:

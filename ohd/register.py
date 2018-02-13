@@ -55,9 +55,17 @@ def load_register(doc_id='1wsMCWX-HLvlsQwURaMU7Zszf6loM0DazDWA8NaZ2xxE', tab_nam
             off.derby_name = unicode(derby_name)
             off.legal_name = unicode(legal_name)
             profile_tab = history.worksheet('Profile')
+            off.officiating_number = profile_tab.acell('D4').value
             off.refcert = util.normalize_cert(profile_tab.acell('B8').value)
             off.nsocert = util.normalize_cert(profile_tab.acell('B10').value)
-            # TODO: add other data
+            # TODO: cert endorsements
+            # off.refcert_endorsements = util.normalize_endorsements(profile_tab.acell('B9').value)
+            # off.nsocert_endorsements = util.normalize_endorsements(profile_tab.acell('B11').value)
+            # TODO: normalize pronouns
+            off.pronouns = profile_tab.acell('B3').value
+            # TODO: geo location magic goes here
+            off.location = profile_tab.acell('B6').value
+            off.league_affiliation = profile_tab.acell('B7').value
             off.add_history(history.worksheet('Game History'))
 
             officials.append(off)
@@ -79,4 +87,9 @@ if __name__ == '__main__':
     o = load_register(cred_file='../service-account.json')
     print u'Officials loaded, there are {} in the list, for a total of {} games'.format(len(o), reduce(lambda x, y: x+y, [len(x.games) for x in o]))
     # print u'Officials loaded, there are {} in the list'.format(len(o))
-    print u'Full processing took {}'.format(datetime.datetime.now() - start)
+    step = datetime.datetime.now()
+    print u'Full loading took {}'.format(step - start)
+    valid_games = o[0].query_history('positions', {'standard': [True], 'assn': ['WFTDA', 'MRDA']},
+                                     {'type': ['Other'], 'role': ['THR', 'ATHR', 'THSNO', 'ATHNSO']})
+    print len(valid_games)
+    print u'Processing took an extra {}'.format(datetime.datetime.now() - step)

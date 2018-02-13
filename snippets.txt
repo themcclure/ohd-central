@@ -9,3 +9,35 @@ row = ['2018-09-27', u'Division\xa01 Playoff, Salem', 'Oregon State Fair and Exp
 
 # get a list of events in a list of officials
 [x.events.keys() for x in o]
+
+
+# Cert query
+len(o[0].query_history('games', {'standard': [True]}, {'type': ['Other']}))
+
+# should return 451 (at least it did before adding the exclude filter
+o[0].query_history('games', {'standard': [True]})
+
+
+# manually step through a dict
+k, v = dictobj.popitem()
+
+
+# location stuff... might be even able to be used to find out who's local to a tournament, and rough travel distance
+# Official.location can be inferred by first looking at a (future?) Profile question or then to the affiliated league.
+import geopy
+from geopy.location import Nominatim
+from geopy.location import distance
+geo = Nominatim()
+l = geo.geocode(Event.event_location)
+l2 = geo.geocode(Event.event_location)
+distance(l, l2).miles
+
+
+#
+# Weight model notes
+possibly a sheet that lists:
+{inclusion} | {exclusinon} | age period (timedelta? or months?) | weight of first age period | ... | weight of last age period |
+
+then it can go through row by row and calculate per family and per position values?
+
+V COMPLEX!
