@@ -1,11 +1,13 @@
 """A collection of utility functions relating to the Officiating History Document."""
-
 __author__ = "hammer"
 
 
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import re
+import datetime
+from dateutil import relativedelta
+from defaultlist import defaultlist
 
 
 def authenticate_with_google(cred_file):
@@ -108,3 +110,73 @@ def normalize_cert(cert_string):
         else:
             # there are no valid numbers in the string
             return 0
+
+
+def query_history(items, filter_in=None, filter_out=None, filter_date=None):
+    """
+    Returns a list of items from the supplied list of items (Games, Positions, Events), that meet the criteria in the
+    provided filters. All items are matched against the include list first, then any items matching against the exclude
+    list are removed.
+    Finally, if there is a date filter provided, items will be returned in a list of lists, grouped by items that lie in
+    the different intervals
+    :param items: list of items (Games, Positions, Events) to filter
+    :param filter_in: A dict of { property: list of values } to select if matched
+    :param filter_out: A dict of { property: list of values } to remove if matched
+    :param filter_date: A dict of date properties to filter or group by:
+                        start: start date (datetime.date) - everything more recent that that will be filtered out.
+                                If start is not specified, then it will default to today's date.
+                        interval: the size (number of months) of each "bucket" from the start date to group results
+                                The first interval (start date - interval) is the 0th interval. If there is no interval
+                                specified (or it is not an int >= 0) then all items will be returned in a single list
+                        max_interval: the max number of intervals to go back, if there is no max_interval specified then
+                                (or it is not an int > 0) it will count all the way back.
+                                If there is no interval specified, max_interval is ignored.
+    :return: a list of objects of type from scope (Games, Positions, Events)
+    """
+    if filter_in is None:
+        filter_in = dict()
+    if filter_out is None:
+        filter_out = dict()
+    if filter_date is None:
+        filter_date = dict()
+    proto_list = list()
+    fdate = datetime.date.today()
+
+    try:
+        proto_list = items
+        # iterate through each element in filter_in, and select the matching values
+        for item in filter_in.keys():
+            proto_list = [i for i in proto_list if getattr(i, item) in filter_in[item]]
+        # iterate through each element in filter_out, and remove the matching values
+        for item in filter_out.keys():
+            proto_list = [i for i in proto_list if hasattr(i, item) and getattr(i, item) not in filter_out[item]]
+    except Exception as e:
+        print u'History query failed. Item Type: {}, Error: {}, Item was {}'.format(type(items[0]), e, i.raw_row)
+
+    try:
+        if 'start' in filter_date and isinstance(filter_date['start'], datetime.date):
+            # input overrides the default start date
+            fdate = filter_date['start']
+
+        if 'interval' not in filter_date or not isinstance(filter_date['interval'], int) or filter_date['interval'] <= 0:
+            # there's no interval set, so just return all items that are older than the start date
+            proto_list = [i for i in proto_list if i.gdate <= fdate]
+        else:
+            bucket_list = defaultlist(list)
+            # process each item in the list, and group it into interval buckets
+            for item in proto_list:
+                # skip over the items before the filter date (fdate)
+                if item.gdate > fdate:
+                    continue
+                datediff = relativedelta.relativedelta(fdate, item.gdate)
+                bucket = (datediff.years * 12 + datediff.months) / filter_date['interval']
+                bucket_list[bucket].append(item)
+
+            max = len(bucket_list)
+            if 'max_interval' in filter_date and isinstance(filter_date['max_interval'], int) and filter_date['max_interval'] > 0:
+                # there is an interval but there's no max_interval, so return as many intervals as it takes to bucket all the items
+                max = filter_date['max_interval']
+            proto_list = bucket_list[:max]
+    except Exception as e:
+        print u'History query failed on date calcs for Item Type: {}, Error: {}'.format(type(items[0]), e)
+    return proto_list

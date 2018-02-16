@@ -41,7 +41,7 @@ class Official:
 
     def __repr__(self):
         return '<name: {}, refcert {}, nsocert: {}, games {}>'.format(self.pref_name.encode('utf-8', 'ignore'),
-                                                                       self.refcert, self.nsocert, len(self.games))
+                                                                      self.refcert, self.nsocert, len(self.games))
 
     def add_history(self, history_tab):
         """
@@ -105,31 +105,40 @@ class Official:
             self.events[game.event_name].num_games += 1
 
     # TODO: how to handle age? Add it to the filter_map and pop it out before the for loop? Ask for start and end date? As for start date and period (year) and split the results as a list based on the number of periods there are?
-    def query_history(self, scope, filter_map_include=None, filter_map_exclude=None):
+    def query_history(self, scope, filter_in=None, filter_out=None, filter_date=None):
         """
         Returns a list of Games, that meet the criteria in the provided filter_maps. All Games are matched against the
         include list first, then any Games matching against the exclude list are removed.
         :param scope: A text label, querying Games, Positions or Events
-        :param filter_map_include: A dict of { property: list of values } to select if matched
-        :param filter_map_exclude: A dict of { property: list of values } to remove if matched
-        :return: a list of Games
+        :param filter_in: A dict of { property: list of values } to select if matched
+        :param filter_out: A dict of { property: list of values } to remove if matched
+        :param filter_date: A dict of date properties to filter or group by:
+                            start: start date (datetime.date) - everything more recent that that will be filtered out
+                            interval: the size of "buckets" (number of months) from the start date to group results
+                                      The first interval (start date - interval) is the 0th interval
+                            max_interval: the max number of intervals to go back, if not present then it will count all the way back
+        :return: a list of objects of type from scope (Games, Positions, Events)
         """
-        if filter_map_include is None:
-            filter_map_include = dict()
-        if filter_map_exclude is None:
-            filter_map_exclude = dict()
+        if filter_in is None:
+            filter_in = dict()
+        if filter_out is None:
+            filter_out = dict()
+        if filter_date is None:
+            filter_date = dict()
+        proto_list = list()
 
         try:
             proto_list = getattr(self, scope)
             # iterate through each element in filter_map_include, and select the matching values
-            for item in filter_map_include.keys():
-                proto_list = [i for i in proto_list if getattr(i, item) in filter_map_include[item]]
+            for item in filter_in.keys():
+                proto_list = [i for i in proto_list if getattr(i, item) in filter_in[item]]
             # iterate through each element in filter_map_exclude, and remove the matching values
-            for item in filter_map_exclude.keys():
-                proto_list = [i for i in proto_list if hasattr(i,item) and getattr(i, item) not in filter_map_exclude[item]]
-            return proto_list
+            for item in filter_out.keys():
+                proto_list = [i for i in proto_list if hasattr(i, item) and getattr(i, item) not in filter_out[item]]
         except Exception as e:
             print u'History query failed. Scope: {}, Error: {}, Item was {}'.format(scope, e, i.raw_row)
+
+        return proto_list
 
 
 class Game:
@@ -172,7 +181,7 @@ class Game:
 
         # non-vital stuff, just record what they write
         self.role_secondary = unicode(raw_row[9].strip())
-        if self.role_secondary  and self.role_secondary not in roles:
+        if self.role_secondary and self.role_secondary not in roles:
             self.standard = False
 
         self.software = unicode(raw_row[10].strip())

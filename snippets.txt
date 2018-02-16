@@ -2,7 +2,12 @@
 import ohd, datetime
 d = datetime.datetime.now()
 o = ohd.load_register()
-row = ['2018-09-27', u'Division\xa01 Playoff, Salem', 'Oregon State Fair and Expo Centre, Salem, OR', 'Cherry City Derby Girls', 'Sacred City Derby Girls - Sacrificers', 'Toronto Roller Derby - CN Power', 'WFTDA', 'Playoff', 'OPR', '', '', 'Umpire Strikes Back (THR)', '', 'Collin DeShotz (CHR)']
+valid_games = o[0].query_history('positions', {'standard': [True], 'assn': ['WFTDA', 'MRDA']},
+                                 {'type': ['Other'], 'role': ['THR', 'ATHR', 'THSNO', 'ATHNSO']})
+qgames = ohd.util.query_history(valid_games, filter_date={"start": d.date(), "interval": 2, "max_interval": 2})
+
+
+#row = ['2018-09-27', u'Division\xa01 Playoff, Salem', 'Oregon State Fair and Expo Centre, Salem, OR', 'Cherry City Derby Girls', 'Sacred City Derby Girls - Sacrificers', 'Toronto Roller Derby - CN Power', 'WFTDA', 'Playoff', 'OPR', '', '', 'Umpire Strikes Back (THR)', '', 'Collin DeShotz (CHR)']
 
 
 

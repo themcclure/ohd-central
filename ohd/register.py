@@ -92,4 +92,6 @@ if __name__ == '__main__':
     valid_games = o[0].query_history('positions', {'standard': [True], 'assn': ['WFTDA', 'MRDA']},
                                      {'type': ['Other'], 'role': ['THR', 'ATHR', 'THSNO', 'ATHNSO']})
     print len(valid_games)
+    qgames = util.query_history(valid_games, filter_date={"start": start.date(), "interval": 2, "max_interval": 2})
+    print u'qgames has {} items. Breakdown is {}'.format(len(qgames), map(len, qgames))
     print u'Processing took an extra {}'.format(datetime.datetime.now() - step)
