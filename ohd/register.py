@@ -89,9 +89,9 @@ if __name__ == '__main__':
     # print u'Officials loaded, there are {} in the list'.format(len(o))
     step = datetime.datetime.now()
     print u'Full loading took {}'.format(step - start)
-    query_string = [{'standard': [True],'assn': ['WFTDA','MRDA']},
-                    {'type': ['Other'],'role': ['THR','ATHR','THSNO','ATHNSO']},
-                    {"start": start.date(),"interval": 12,"max_interval": 5}]
+    query_string = [{'standard': [True], 'assn': ['WFTDA', 'MRDA']},
+                    {'type': ['Other'], 'role': ['THR', 'ATHR', 'THSNO', 'ATHNSO']},
+                    {"start": start.date(), "interval": 12, "max_interval": 5}]
     for off in o:
         qgames = util.query_history(off.positions, *query_string)
         print u'{}\'s breakdown of {} is {}'.format(off.pref_name, qgames[0].__class__, map(len, qgames))

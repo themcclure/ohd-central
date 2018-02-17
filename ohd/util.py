@@ -128,7 +128,7 @@ def query_history(items, filter_in=None, filter_out=None, filter_date=None):
                         interval: the size (number of months) of each "bucket" from the start date to group results
                                 The first interval (start date - interval) is the 0th interval. If there is no interval
                                 specified (or it is not an int >= 0) then all items will be returned in a single list
-                        max_interval: the max number of intervals to go back, if there is no max_interval specified then
+                        max_interval: the max_intervals number of intervals to go back, if there is no max_interval specified then
                                 (or it is not an int > 0) it will count all the way back.
                                 If there is no interval specified, max_interval is ignored.
     :return: a list of objects of type from scope (Games, Positions, Events)
@@ -141,6 +141,7 @@ def query_history(items, filter_in=None, filter_out=None, filter_date=None):
         filter_date = dict()
     proto_list = list()
     fdate = datetime.date.today()
+    i = None
 
     try:
         proto_list = items
@@ -172,11 +173,11 @@ def query_history(items, filter_in=None, filter_out=None, filter_date=None):
                 bucket = (datediff.years * 12 + datediff.months) / filter_date['interval']
                 bucket_list[bucket].append(item)
 
-            max = len(bucket_list)
+            max_intervals = len(bucket_list)
             if 'max_interval' in filter_date and isinstance(filter_date['max_interval'], int) and filter_date['max_interval'] > 0:
                 # there is an interval but there's no max_interval, so return as many intervals as it takes to bucket all the items
-                max = filter_date['max_interval']
-            proto_list = bucket_list[:max]
+                max_intervals = filter_date['max_interval']
+            proto_list = bucket_list[:max_intervals]
     except Exception as e:
         print u'History query failed on date calcs for Item Type: {}, Error: {}'.format(type(items[0]), e)
     return proto_list
