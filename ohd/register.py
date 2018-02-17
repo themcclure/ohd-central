@@ -94,5 +94,5 @@ if __name__ == '__main__':
                     {"start": start.date(), "interval": 12, "max_interval": 5}]
     for off in o:
         qgames = util.query_history(off.positions, *query_string)
-        print u'{}\'s breakdown of {} is {}'.format(off.pref_name, qgames[0].__class__, map(len, qgames))
+        print u'{}\'s breakdown of {} is {}'.format(off.pref_name, qgames[0][0].__class__, map(len, qgames))
     print u'Processing took an extra {}'.format(datetime.datetime.now() - step)
