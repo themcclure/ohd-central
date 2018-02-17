@@ -31,13 +31,6 @@ class Official:
         self.games = []
         self.positions = []
         self.events = dict()
-        # TODO: the game counts become complex, so maybe don't pre-cache them and calculate them each time, with flags for game/position and role/fam?
-        # self.game_count = 0
-        # self.position_count = 0
-        # self.ref_position_count = 0
-        # self.nso_position_count = 0
-        # self.weighting = {}
-        # self.qualified_games = {}
 
     def __repr__(self):
         return '<name: {}, refcert {}, nsocert: {}, games {}>'.format(self.pref_name.encode('utf-8', 'ignore'),
@@ -103,42 +96,6 @@ class Official:
             self.events[game.event_name] = Event(game.event_name, game)
         else:
             self.events[game.event_name].num_games += 1
-
-    # TODO: how to handle age? Add it to the filter_map and pop it out before the for loop? Ask for start and end date? As for start date and period (year) and split the results as a list based on the number of periods there are?
-    def query_history(self, scope, filter_in=None, filter_out=None, filter_date=None):
-        """
-        Returns a list of Games, that meet the criteria in the provided filter_maps. All Games are matched against the
-        include list first, then any Games matching against the exclude list are removed.
-        :param scope: A text label, querying Games, Positions or Events
-        :param filter_in: A dict of { property: list of values } to select if matched
-        :param filter_out: A dict of { property: list of values } to remove if matched
-        :param filter_date: A dict of date properties to filter or group by:
-                            start: start date (datetime.date) - everything more recent that that will be filtered out
-                            interval: the size of "buckets" (number of months) from the start date to group results
-                                      The first interval (start date - interval) is the 0th interval
-                            max_interval: the max number of intervals to go back, if not present then it will count all the way back
-        :return: a list of objects of type from scope (Games, Positions, Events)
-        """
-        if filter_in is None:
-            filter_in = dict()
-        if filter_out is None:
-            filter_out = dict()
-        if filter_date is None:
-            filter_date = dict()
-        proto_list = list()
-
-        try:
-            proto_list = getattr(self, scope)
-            # iterate through each element in filter_map_include, and select the matching values
-            for item in filter_in.keys():
-                proto_list = [i for i in proto_list if getattr(i, item) in filter_in[item]]
-            # iterate through each element in filter_map_exclude, and remove the matching values
-            for item in filter_out.keys():
-                proto_list = [i for i in proto_list if hasattr(i, item) and getattr(i, item) not in filter_out[item]]
-        except Exception as e:
-            print u'History query failed. Scope: {}, Error: {}, Item was {}'.format(scope, e, i.raw_row)
-
-        return proto_list
 
 
 class Game:
@@ -228,7 +185,8 @@ class Event:
     def __init__(self, name, game):
         self.name = name
         self.num_games = 1
-        self.gdate = game.gdate  # TODO: or do we perhaps only really care about the year the event ran in?
+        self.gdate = game.gdate
+        self.gyear = game.gdate.year
         self.assn = game.assn
         self.type = game.type
         # self.role = game.role
