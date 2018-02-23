@@ -19,3 +19,7 @@ nso_family['pm'] = ['PBM', 'PBT', 'LT']
 nso_roles = ['THNSO', 'ATHNSO'] + nso_family['ch'] + nso_family['pt'] + nso_family['st'] + nso_family['pm'] + ['HNSO', 'ALTN']
 
 roles = ref_roles + nso_roles
+
+google_api_key='AIzaSyAFZuqxbBJ7GaPSBI3vAWRzi9yL9zFR9iQ'
+locations = dict()
+officials = list()

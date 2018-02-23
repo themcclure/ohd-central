@@ -1,15 +1,44 @@
 # Code snippet for interacting with the loaded Official objects
 import ohd, datetime
 start = datetime.datetime.now()
+locations = ohd.util.load_locations(cred_file='./service-account.json')
+ohd.config.locations = locations
+print u'Locations took {}'.format(datetime.datetime.now() - start)
 o = ohd.load_register()
+ohd.config.officials = o
+print u'Officials + Locations took {}'.format(datetime.datetime.now() - start)
+# some "qualifying" query for games
 query_string = [{'standard': [True], 'assn': ['WFTDA', 'MRDA']},
                 {'type': ['Other'], 'role': ['THR', 'ATHR', 'THSNO', 'ATHNSO']},
                 {"start": start.date(), "interval": 12, "max_interval": 5}]
 qgames = ohd.util.query_history(o[0].positions, *query_string)
+print u'Query + Officials + Locations took {}'.format(datetime.datetime.now() - start)
 
 
-#row = ['2018-09-27', u'Division\xa01 Playoff, Salem', 'Oregon State Fair and Expo Centre, Salem, OR', 'Cherry City Derby Girls', 'Sacred City Derby Girls - Sacrificers', 'Toronto Roller Derby - CN Power', 'WFTDA', 'Playoff', 'OPR', '', '', 'Umpire Strikes Back (THR)', '', 'Collin DeShotz (CHR)']
 
+### GEO STUFF
+from geopy.distance import vincenty as distance
+google_api = ohd.util.connect_to_geocode_api()
+l1 = google_api.geocode(','.join(["Seattle", "WA", "USA"]))
+l2 = google_api.geocode(','.join(["Ghent", "", "Belgium"]))
+distance(l1.point,l2.point)
+
+
+# Filter list of object to find matching patterns:
+is_cert = lambda x: True if x.refcert != 0 or x.nsocert != 0 else False
+is_refcert = lambda x: True if x.refcert != 0 else False
+is_nsocert = lambda x: True if x.nsocert != 0 else False
+fo = filter(is_cert, o)
+
+# who's local?
+local_tolerance = 5000
+host_location = google_api.geocode("Manchester, UK")
+is_local_official = lambda x: True if x.locationref != (0,0) and distance(x.locationref, host_location.point).miles < local_tolerance else False
+locals = filter(is_local_official, o)
+
+# which leagues are local?
+local_tolerance = 500
+{ k:v for k,v in locations.items() if v[3] and distance(v[3], host.point).miles < local_tolerance }
 
 
 
@@ -17,26 +46,9 @@ qgames = ohd.util.query_history(o[0].positions, *query_string)
 [x.events.keys() for x in o]
 
 
-# Cert query
-len(o[0].query_history('games', {'standard': [True]}, {'type': ['Other']}))
-
-# should return 451 (at least it did before adding the exclude filter
-o[0].query_history('games', {'standard': [True]})
-
 
 # manually step through a dict
 k, v = dictobj.popitem()
-
-
-# location stuff... might be even able to be used to find out who's local to a tournament, and rough travel distance
-# Official.location can be inferred by first looking at a (future?) Profile question or then to the affiliated league.
-import geopy
-from geopy.location import Nominatim
-from geopy.location import distance
-geo = Nominatim()
-l = geo.geocode(Event.event_location)
-l2 = geo.geocode(Event.event_location)
-distance(l, l2).miles
 
 
 #

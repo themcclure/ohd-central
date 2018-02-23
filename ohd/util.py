@@ -4,10 +4,15 @@ __author__ = "hammer"
 
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+# import googlemaps
 import re
 import datetime
 from dateutil import relativedelta
 from defaultlist import defaultlist
+# OHD specific imports
+from geopy.geocoders import GoogleV3
+from geopy.distance import vincenty as distance
+from ohd import config
 
 
 def authenticate_with_google(cred_file):
@@ -20,6 +25,15 @@ def authenticate_with_google(cred_file):
     credentials = ServiceAccountCredentials.from_json_keyfile_name(cred_file, scope)
 
     return gspread.authorize(credentials)
+
+
+def connect_to_geocode_api(key=config.google_api_key):
+    """
+    Takes the Google API key and returns a geocode api connection
+    :param key: Google API key
+    :return: connection to the geocode service
+    """
+    return GoogleV3(api_key=key)
 
 
 def get_names(sheet):
@@ -181,3 +195,118 @@ def query_history(items, filter_in=None, filter_out=None, filter_date=None):
     except Exception as e:
         print u'History query failed on date calcs for Item Type: {}, Error: {}'.format(type(items[0]), e)
     return proto_list
+
+
+def normalize_officials_location(geocoding_service, location, league_affiliation):
+    """
+    Take the self reported location, and return the lat/long of that. If it does not exist, fall back to their league's
+    location. If there is no affiliation either, then return (0,0)
+    :param geocoding_service: the object link to the geocoding service
+    :param location: the location from their Profile tab
+    :param league_affiliation: the league affiliation from their Profile tab
+    :return: a tuple (lat,long)
+    """
+    # TODO: is (0,0) or None better? Try filtering on distance and see where that gets us
+    working_location = ''
+    if location:
+        working_location = location
+    elif league_affiliation:
+        # TODO: This is overkill - assuming several most people don't have multiple affiliations
+        if config.locations:
+            working_location = [l for l in league_affiliation.split(',') if l.strip() in config.locations.keys()][0]
+    else:
+        return 0, 0
+
+    loc = geocoding_service.geocode(working_location)
+    if loc:
+        return loc.latitude, loc.longitude
+    else:
+        return 0, 0
+
+
+def load_locations(cred_file='./service-account.json'):
+    """
+    Queries the WFTDA League membership sheet for locations, and returns a dict of league name and location information.
+    The source Google sheet is also updated with the latest location data.
+    The returned dict also includes the known aliases.
+    :param cred_file: location of the credentials file
+    :return: a dict of league name and location info
+    """
+    start = datetime.datetime.now()
+    doc_id = '1Nv0UMugPqGEaDAwdz8dQtCIgzlR8gfM3i6Tp7ZSXzjo'
+    gc = authenticate_with_google(cred_file)
+
+    # Open the raw list from the WFTDA
+    location_doc = gc.open_by_key(doc_id)
+    raw_leagues_doc = location_doc.worksheet('Full Members of WFTDA')
+    raw_leagues = dict()
+    # TODO: tag as Full members
+    # TODO: tag membership class and "member since"
+    # TODO: add Apprentice members
+    # TODO: add MRDA and JRDA leagues
+    for league in raw_leagues_doc.get_all_values()[1:]:
+        if not league[0]:
+            continue  # skip over rows with empty league names
+        location_string = ', '.join(league[6:9])  # City, (State/Province), Country
+        raw_row = ':'.join(league)
+        raw_leagues[league[0]] = [league[0], location_string, league[8], None, raw_row]  # Name, Location, Country, lat/long tuple, raw row
+
+    # Load the processed leagues
+    processed_leagues_doc = location_doc.worksheet('League Locations')
+    # processed_leagues_header_row = processed_leagues_doc.get_all_values()[0]
+    pre_processed_leagues = processed_leagues_doc.get_all_values()[1:]
+    # turn the values list into a dict, removing lines with no league name
+    processed_leagues = {l[0]: l for l in pre_processed_leagues if l[0]}
+
+    # Go through the list of leagues from the WFTDA and geocode only the missing or changed leagues
+    google_api = connect_to_geocode_api()
+    for league in raw_leagues:
+        # if the league is in the processed leagues, and if the raw rows (signature) match, and it has a geocode, then skip it
+        if league in processed_leagues and raw_leagues[league][4] == processed_leagues[league][4] and processed_leagues[league][3]:
+            continue
+        try:
+            print u'Geocoding {}'.format(raw_leagues[league][0])
+            loc = google_api.geocode(raw_leagues[league][1])
+        except Exception as e:
+            print u'Google geocode error {}'.format(e)
+            continue
+        if loc:
+            raw_leagues[league][3] = loc.latitude, loc.longitude
+        processed_leagues[league] = raw_leagues[league]
+
+    # TODO: And save the list back to the sheet
+    # processed_leagues_doc.clear()
+    num_leagues = len(processed_leagues) + 1
+    num_cols = processed_leagues_doc.col_count
+    processed_leagues_doc.resize(rows=num_leagues)
+    source_range = processed_leagues_doc.range(2, 1, num_leagues, processed_leagues_doc.col_count)  # from the first data row, to the last
+    target_range = list()
+
+    # while len(source_range):
+    #     row = source_range[:num_cols]
+        # TODO: fill in the updated values!!
+        # row[0].value = ''
+        # target_range.extend(row)
+        # del source_range[:num_cols]
+
+    # processed_leagues_doc.resize(rows=2)
+    # Go through each processed league, grab a row from the source range, edit the values and add it to the target range
+    for league in processed_leagues:
+        row = source_range[:num_cols]
+        for i in range(len(processed_leagues[league])):
+            row[i].value = processed_leagues[league][i]
+        target_range.extend(row)
+        del source_range[:num_cols]
+        # TODO append_row is fucking slow. Do it another way... range?
+        # processed_leagues_doc.append_row(processed_leagues[league])
+    # clean up the spare row below the header that can't be deleted
+    # processed_leagues_doc.delete_row(2)
+
+    # Add the updated Cells to the Google sheet
+    processed_leagues_doc.update_cells(target_range)
+
+    # TODO: add the aliases to the processed list
+    raw_aliases_doc = location_doc.worksheet('League Aliases')
+
+    print u'Processing leagues and locations took {}'.format(datetime.datetime.now() - start)
+    return processed_leagues

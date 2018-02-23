@@ -4,7 +4,7 @@ __author__ = 'hammer'
 
 import gspread
 import datetime
-# OHD specific stuff
+# OHD specific imports
 import util
 import official
 
@@ -23,9 +23,11 @@ def load_register(doc_id='1wsMCWX-HLvlsQwURaMU7Zszf6loM0DazDWA8NaZ2xxE', tab_nam
     :param cred_file: The JSON file with the service account credentials in it
     :return: A list of loaded history docs
     """
-
     start = datetime.datetime.now()
+
+    # authenticate with google and open their geocoding service
     gc = util.authenticate_with_google(cred_file)
+    google_api = util.connect_to_geocode_api()
 
     # Open the History Register
     register = gc.open_by_key(doc_id)
@@ -63,11 +65,13 @@ def load_register(doc_id='1wsMCWX-HLvlsQwURaMU7Zszf6loM0DazDWA8NaZ2xxE', tab_nam
             # off.nsocert_endorsements = util.normalize_endorsements(profile_tab.acell('B11').value)
             # TODO: normalize pronouns
             off.pronouns = profile_tab.acell('B3').value
+            off.league_affiliation = profile_tab.acell('B7').value
             # TODO: geo location magic goes here
             off.location = profile_tab.acell('B6').value
-            off.league_affiliation = profile_tab.acell('B7').value
+            off.locationref = util.normalize_officials_location(google_api, off.location, off.league_affiliation)
+            # add all the games from the Game History tab
             off.add_history(history.worksheet('Game History'))
-
+            # add this official to the list
             officials.append(off)
 
             # profiling and testing/verification section
@@ -84,6 +88,9 @@ def load_register(doc_id='1wsMCWX-HLvlsQwURaMU7Zszf6loM0DazDWA8NaZ2xxE', tab_nam
 
 if __name__ == '__main__':
     start = datetime.datetime.now()
+    # get the location info
+    locations = util.load_locations(cred_file='../service-account.json')
+
     o = load_register(cred_file='../service-account.json')
     print u'Officials loaded, there are {} in the list, for a total of {} games'.format(len(o), reduce(lambda x, y: x+y, [len(x.games) for x in o]))
     # print u'Officials loaded, there are {} in the list'.format(len(o))
@@ -96,3 +103,4 @@ if __name__ == '__main__':
         qgames = util.query_history(off.positions, *query_string)
         print u'{}\'s breakdown of {} is {}'.format(off.pref_name, qgames[0][0].__class__, map(len, qgames))
     print u'Processing took an extra {}'.format(datetime.datetime.now() - step)
+

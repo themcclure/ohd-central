@@ -4,6 +4,7 @@ Module for reading, storing and processing officials data.
 __author__ = 'hammer'
 
 import datetime
+from dateutil.parser import parse
 # CONFIG:
 # list of known Associations, Game Types and Roles
 import config
@@ -26,6 +27,9 @@ class Official:
         self.pref_name = ''
         self.derby_name = ''
         self.legal_name = ''
+        self.league_affiliation = ''
+        self.location = ''
+        self.locationref = (0, 0)
         self.refcert = 0
         self.nsocert = 0
         self.games = []
@@ -50,8 +54,7 @@ class Official:
         for item in history:
             try:
                 # Validation: Is it a valid date?
-                gdate = datetime.datetime.strptime(item[0], '%Y-%m-%d').date()
-                # print u'Date for the game is {}.'.format(datetime.datetime.strptime(game[0], '%Y-%m-%d').date())
+                gdate = parse(item[0]).date()  # This accepts many forms of date format, but where ambiguous it assumes m/d/y over d/m/y
                 self.add_game(Game(gdate, item))
             except Exception as e:
                 # This game isn't valid, go to the next one
