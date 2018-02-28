@@ -16,6 +16,16 @@ print u'Query + Officials + Locations took {}'.format(datetime.datetime.now() - 
 
 
 
+### FUZZY STRING MATCHING STUFF
+# https://marcobonzanini.com/2015/02/25/fuzzy-string-matching-in-python/
+from fuzzywuzzy import process
+# doing my own tokenization improves the quality of the result
+def match_league(league, list=ohd.config.locations):
+    tokens_common_words = ['Derby', 'Girls', 'Rollers', 'Roller', 'Rollergirls']
+    loc_names = [k for k,v in list.items()]
+    return process.extractOne(' '.join(set(league.split(' ')) - set(tokens_common_words)), loc_names, scorer=fuzz.token_set_ratio)
+
+
 ### GEO STUFF
 from geopy.distance import vincenty as distance
 google_api = ohd.util.connect_to_geocode_api()

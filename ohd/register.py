@@ -12,7 +12,7 @@ import official
 # TODO: add two new arguments, max_docs returned and starting_location, in case this ever gets too big
 # TODO: parameterize this a bit more rather than pasting in the values in the def line
 # TODO: retool this as either load_register_by_id / _url or add it as a param
-def load_register(doc_id='1wsMCWX-HLvlsQwURaMU7Zszf6loM0DazDWA8NaZ2xxE', tab_name='History Register', id_col_num=5,
+def load_register(doc_id='1vrvYjcNLTdWypfeWjMUyMuo3LVtX80CKMRY-3SegdDw', tab_name='History Register', id_col_num=5,
                   cred_file='./service-account.json'):
     """
     Opens a History Register google document, with a specified Google Sheet ID, and loads the doc IDs from the specified
