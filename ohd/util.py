@@ -7,6 +7,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 # import googlemaps
 import re
 import datetime
+from dateutil.parser import parse
 from dateutil import relativedelta
 from defaultlist import defaultlist
 # OHD specific imports
@@ -224,6 +225,7 @@ def normalize_officials_location(geocoding_service, location, league_affiliation
         return 0, 0
 
 
+# TODO: refactor into spatial module
 def load_locations(cred_file='./service-account.json'):
     """
     Queries the WFTDA League membership sheet for locations, and returns a dict of league name and location information.
@@ -257,6 +259,7 @@ def load_locations(cred_file='./service-account.json'):
                                     league[4],  # Full membership join date
                                     None,  # Latitute
                                     None,  # Longitude
+                                    None,  # Google Place ID
                                     raw_row  # raw row
                                 ]
 
@@ -269,6 +272,7 @@ def load_locations(cred_file='./service-account.json'):
 
     # Go through the list of leagues from the WFTDA and geocode only the missing or changed leagues
     google_api = connect_to_geocode_api()
+    num_geocoded = 0
     for league in raw_leagues:
         # if the league is in the processed leagues, and if the raw rows (signature) match, and it has both lat and long, then skip it
         if league in processed_leagues and raw_leagues[league][-1] == processed_leagues[league][-1] \
@@ -276,16 +280,42 @@ def load_locations(cred_file='./service-account.json'):
             continue
         try:
             print u'Geocoding {}'.format(raw_leagues[league][0])
-            loc = google_api.geocode(raw_leagues[league][1:4])
-            # TODO: the human submitted states are garbage, so geocode them too?
+            raw_city = raw_leagues[league][1]
+            # At least one league entered their Shire rather than the city, that's preventing a City match
+            if raw_city[-5:] == 'shire':
+                raw_city = raw_city[:-5]
+            # geocode using City State/Province and Country
+            loc = google_api.geocode(u', '.join([raw_city, raw_leagues[league][2], raw_leagues[league][3]]))
+            place_id, city, state, country, latitude, longitude = normalize_location_from_geocode(loc)
+            # sometimes the listed state is preventing preventing a location match, so if there's no match first, try without the state
+            if not city:
+                loc = google_api.geocode(u', '.join([raw_city, raw_leagues[league][3]]))
+                place_id, city, state, country, latitude, longitude = normalize_location_from_geocode(loc)
+            num_geocoded += 1
         except Exception as e:
-            print u'Google geocode error {}'.format(e)
+            print u'EXCEPTION: Google geocode error {}'.format(e)
+            print u'raw_league: {}'.format(raw_leagues[league])
             continue
         if loc:
-            raw_leagues[league][7] = loc.latitude
-            raw_leagues[league][8] = loc.longitude
+            raw_leagues[league][1] = city
+            raw_leagues[league][2] = state
+            raw_leagues[league][3] = country
+            start_date = raw_leagues[league][6]
+            if start_date.lower().strip() == 'original':
+                raw_leagues[league][6] = '2004-01-01'
+            else:
+                # parse out the first date looking string that can be found, or a four digit year (whichever is first)
+                try:
+                   start_date = re.findall('(\d+[/|-]\d+[/|-]\d+|\d{4})', start_date)[0]
+                   raw_leagues[league][6] = parse(start_date).date().isoformat()
+                except:
+                    print u'Date format not recognized for league {}'.format(league)
+            raw_leagues[league][7] = latitude
+            raw_leagues[league][8] = longitude
+            raw_leagues[league][9] = place_id
         processed_leagues[league] = raw_leagues[league]
 
+    print u'Processed Leagues, geocoded {}, took {}'.format(num_geocoded, datetime.datetime.now() - start)
     num_leagues = len(processed_leagues) + 1
     num_cols = processed_leagues_doc.col_count
     processed_leagues_doc.resize(rows=num_leagues)
@@ -342,3 +372,34 @@ def build_league_geojson(leagues, filename=None):
         pass
 
     return league_collection
+
+
+def normalize_location_from_geocode(location, long_names=True):
+    """
+    Takes the JSON returned from geocoding and parses out the normalized Google Place ID, City, State/Province, Country,
+    Latitude and Longitude values and returns them as a list.
+    :param location: JSON object from geocoding
+    :param long_names: If this is True, return the long_name versions, otherwise return the short_name versions
+    :return: list of Google Place ID, City, State/Province, Country, Latitude, Longitude
+    """
+    if not location:
+        return [None, None, None, None, None, None]
+    name_type = 'short_name'
+    if long_names:
+        name_type = 'long_name'
+    city = ''
+    state = ''
+    country = ''
+    latitude = location.latitude
+    longitude = location.longitude
+
+    geo = location.raw
+    place_id = geo['place_id']
+    for component in geo['address_components']:
+        if 'locality' in component['types']:
+            city = component[name_type]
+        elif 'administrative_area_level_1' in component['types']:
+            state = component[name_type]
+        elif 'country' in component['types']:
+            country = component[name_type]
+    return [place_id, city, state, country, latitude, longitude]

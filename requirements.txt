@@ -3,6 +3,6 @@ gspread==0.6.2
 python-dateutil==2.6.1
 defaultlist==1.0.0
 pyopenssl==17.5.0
-geopy==1.11.0
 fuzzywuzzy==0.16.0
 python-Levenshtein==0.12.0
+geojson
