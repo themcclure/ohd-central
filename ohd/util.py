@@ -15,6 +15,7 @@ from ohd import config
 from geopy.geocoders import GoogleV3
 # from geopy.distance import vincenty as distance
 from geojson import Point, Feature, FeatureCollection
+from fuzzywuzzy import process, fuzz
 
 
 def authenticate_with_google(cred_file):
@@ -226,24 +227,25 @@ def normalize_officials_location(geocoding_service, location, league_affiliation
 
 
 # TODO: refactor into spatial module
-def load_locations(cred_file='./service-account.json'):
+# TODO: refactor to pass a google connection, not authenticate each time
+def load_locations(cred_file='./service-account.json', read_only=True):
     """
     Queries the WFTDA League membership sheet for locations, and returns a dict of league name and location information.
     The source Google sheet is also updated with the latest location data.
     The returned dict also includes the known aliases.
     :param cred_file: location of the credentials file
+    :param read_only: If this is True, then alert the user but don't update the locations file, even if there are changes
     :return: a dict of league name and location info
     """
     start = datetime.datetime.now()
     doc_id = '1Nv0UMugPqGEaDAwdz8dQtCIgzlR8gfM3i6Tp7ZSXzjo'
     gc = authenticate_with_google(cred_file)
 
-    # Open the raw list from the WFTDA
     location_doc = gc.open_by_key(doc_id)
+    # Open the raw list of full members from the WFTDA
     raw_leagues_doc = location_doc.worksheet('Full Members of WFTDA')
     # raw_leagues_doc = location_doc.worksheet('Test Members of WFTDA')
     raw_leagues = dict()
-    # TODO: add Apprentice members
     # TODO: add MRDA and JRDA leagues
     for league in raw_leagues_doc.get_all_values()[1:]:
         if not league[0]:
@@ -255,8 +257,28 @@ def load_locations(cred_file='./service-account.json'):
                                     league[7],  # State/Province,
                                     league[8],  # Country,
                                     "WFTDA",  # Association
-                                    league[1],  # Membership Class (APP will be for Apprentice membership)
+                                    league[1],  # Membership Class (Z will be for Apprentice membership)
                                     league[4],  # Full membership join date
+                                    None,  # Latitute
+                                    None,  # Longitude
+                                    None,  # Google Place ID
+                                    raw_row  # raw row
+                                ]
+
+    # Open the raw list of apprentice members from the WFTDA
+    raw_leagues_doc = location_doc.worksheet('Apprentice Members of WFTDA')
+    for league in raw_leagues_doc.get_all_values()[1:]:
+        if not league[0]:
+            continue  # skip over rows with empty league names
+        raw_row = ':'.join(league)
+        raw_leagues[league[0]] = [
+                                    league[0],  # League Name
+                                    league[6],  # City,
+                                    league[7],  # State/Province,
+                                    league[8],  # Country,
+                                    "WFTDA",  # Association
+                                    "Z",  # Membership Class (Z will be for Apprentice membership)
+                                    league[3],  # AP membership join date
                                     None,  # Latitute
                                     None,  # Longitude
                                     None,  # Google Place ID
@@ -265,9 +287,8 @@ def load_locations(cred_file='./service-account.json'):
 
     # Load the processed leagues
     processed_leagues_doc = location_doc.worksheet('League Locations')
-    # processed_leagues_header_row = processed_leagues_doc.get_all_values()[0]
     processed_leagues_init = processed_leagues_doc.get_all_values()[1:]
-    # turn the values list into a dict, removing lines with no league name
+    # turn the values list into a dict so we can search by league name easily, also to remove entries with no league name
     processed_leagues = {l[0]: l for l in processed_leagues_init if l[0]}
 
     # Go through the list of leagues from the WFTDA and geocode only the missing or changed leagues
@@ -306,37 +327,41 @@ def load_locations(cred_file='./service-account.json'):
             else:
                 # parse out the first date looking string that can be found, or a four digit year (whichever is first)
                 try:
-                   start_date = re.findall('(\d+[/|-]\d+[/|-]\d+|\d{4})', start_date)[0]
-                   raw_leagues[league][6] = parse(start_date).date().isoformat()
-                except:
-                    print u'Date format not recognized for league {}'.format(league)
+                    start_date = re.findall('(\d+[/|-]\d+[/|-]\d+|\d{4})', start_date)[0]
+                    raw_leagues[league][6] = parse(start_date).date().isoformat()
+                except Exception as e:
+                    print u'Date format not recognized for league {} because {}'.format(league, e)
             raw_leagues[league][7] = latitude
             raw_leagues[league][8] = longitude
             raw_leagues[league][9] = place_id
         processed_leagues[league] = raw_leagues[league]
 
     print u'Processed Leagues, geocoded {}, took {}'.format(num_geocoded, datetime.datetime.now() - start)
-    num_leagues = len(processed_leagues) + 1
-    num_cols = processed_leagues_doc.col_count
-    processed_leagues_doc.resize(rows=num_leagues)
-    source_range = processed_leagues_doc.range(2, 1, num_leagues, processed_leagues_doc.col_count)  # from the first data row, to the last
-    target_range = list()
 
-    # Go through each processed league, grab a row from the source range, edit the values and add it to the target range
-    for league in processed_leagues:
-        row = source_range[:num_cols]
-        for i in range(len(processed_leagues[league])):
-            row[i].value = processed_leagues[league][i]
-        target_range.extend(row)
-        del source_range[:num_cols]
+    # Only if there were any League changes are the Cells updated in the Google sheet
+    if not read_only and num_geocoded > 0:
+        num_leagues = len(processed_leagues) + 1
+        num_cols = processed_leagues_doc.col_count
+        processed_leagues_doc.resize(rows=num_leagues)
+        source_range = processed_leagues_doc.range(2, 1, num_leagues, processed_leagues_doc.col_count)  # from the first data row, to the last
+        target_range = list()
 
-    # Add the updated Cells to the Google sheet
-    processed_leagues_doc.update_cells(target_range)
+        # Go through each processed league, grab a row from the source range, edit the values and add it to the target range
+        for league in processed_leagues:
+            row = source_range[:num_cols]
+            for i in range(len(processed_leagues[league])):
+                row[i].value = processed_leagues[league][i]
+            target_range.extend(row)
+            del source_range[:num_cols]
+
+        processed_leagues_doc.update_cells(target_range)  # write the actual data to the sheet
+    elif read_only and num_geocoded > 0:
+        print u'There were {} new or changed leagues, consider running again with read_only=False'
 
     # TODO: add the aliases to the processed list - or maybe just use fuzzy matching for leagues not found in the list? Both?
     # raw_aliases_doc = location_doc.worksheet('League Aliases')
 
-    print u'Processing leagues and locations took {}'.format(datetime.datetime.now() - start)
+    print u'{} Processing leagues and locations took {}'.format(__name__, datetime.datetime.now() - start)
     return processed_leagues
 
 
@@ -349,21 +374,21 @@ def build_league_geojson(leagues, filename=None):
     """
     league_features = list()
     for league in leagues:
-        l = leagues[league]
+        ll = leagues[league]
         loc_props = dict()
-        loc_props["description"] = l[0]
-        loc_props["city"] = l[1]
-        loc_props["state/province"] = l[2]
-        loc_props["country"] = l[3]
-        loc_props["association"] = l[4]
-        loc_props["class"] = l[5]
-        loc_props["joined"] = l[6]
+        loc_props["description"] = ll[0]
+        loc_props["city"] = ll[1]
+        loc_props["state/province"] = ll[2]
+        loc_props["country"] = ll[3]
+        loc_props["association"] = ll[4]
+        loc_props["class"] = ll[5]
+        loc_props["joined"] = ll[6]
         try:
-            longlat = (float(l[8]), float(l[7]))
+            longlat = (float(ll[8]), float(ll[7]))
         except Exception as e:
-            print u'Skipping {}, it has no lat/long. Actual error was:: {}'.format(l[0], e)
+            print u'Skipping {}, it has no lat/long. Actual error was:: {}'.format(ll[0], e)
             continue
-        f = Feature(geometry=Point(longlat), properties=loc_props)  # GeoJSON wants long/lat in that order
+        f = Feature(id=ll[9], geometry=Point(longlat), properties=loc_props)  # GeoJSON wants long/lat in that order
         league_features.append(f)
     league_collection = FeatureCollection(league_features)
 
@@ -390,6 +415,7 @@ def normalize_location_from_geocode(location, long_names=True):
     city = ''
     state = ''
     country = ''
+    natural_feature = ''
     latitude = location.latitude
     longitude = location.longitude
 
@@ -402,4 +428,68 @@ def normalize_location_from_geocode(location, long_names=True):
             state = component[name_type]
         elif 'country' in component['types']:
             country = component[name_type]
+        elif 'natural_feature' in component['types']:
+            natural_feature = component[name_type]
+    # if there's no city but there is a natural feature, use that instead (eg Lake Tahoe, USA)
+    if not city and natural_feature:
+        city = natural_feature
     return [place_id, city, state, country, latitude, longitude]
+
+
+def match_league(league, canonical=config.locations, confidence=90):
+    """
+    Matches a provided league name against a list. Returns an exact match, otherwise find a high confidence fuzzy match,
+    and if there isn't a match that is higher than the confidence threshold, then return the originally provided name.
+    :param league: provided league name
+    :param canonical: list of canonical league names
+    :param confidence: the minimum acceptable confidence for a match
+    :return: best matched league
+    """
+    tokens_common_words = ['Derby', 'Girls', 'Rollers', 'Roller', 'Rollergirls']
+
+    if league in canonical:
+        return canonical[league][0]
+
+    loc_names = canonical.keys()
+    fuzzy_match, match_confidence = process.extractOne(' '.join(set(league.split(' ')) - set(tokens_common_words)),
+                                                       loc_names, scorer=fuzz.token_set_ratio)
+    if match_confidence > confidence:
+        return fuzzy_match
+    else:
+        return league
+
+
+def match_league_lemma(league, canonical=config.locations, confidence=90):
+    """
+    Matches a provided league name against a list. Returns an exact match, otherwise find a high confidence fuzzy match,
+    and if there isn't a match that is higher than the confidence threshold, then return the originally provided name.
+    :param league: provided league name
+    :param canonical: list of canonical league names
+    :param confidence: the minimum acceptable confidence for a match
+    :return: best matched league
+    """
+    my_stop_list = ['derby', 'girl', 'rollers', 'roller', 'rollergirl', 'rollergirls', 'rollergirlz', 'girlz']
+
+    # for testing, re-lemmaize the canonical list each run.
+    import spacy
+    nlp = spacy.load('en')
+    for k,v in canonical.items():
+        lem_name = u' '.join([t.lemma_ for t in nlp(unicode(k)) if not t.is_stop and t.lemma_ not in my_stop_list])
+        if lem_name not in canonical.keys():
+            canonical[lem_name] = v
+
+    if league in canonical:
+        return canonical[league][0]
+    league_lem = u' '.join([t.lemma_ for t in nlp(unicode(league)) if not t.is_stop and t.lemma_ not in my_stop_list])
+    if league_lem in canonical:
+        return canonical[league_lem][0]
+
+    loc_names = canonical.keys()
+    fuzzy_match_full, match_confidence_full = process.extractOne(league, loc_names, scorer=fuzz.token_set_ratio)
+    fuzzy_match_lem, match_confidence_lem = process.extractOne(league_lem, loc_names, scorer=fuzz.token_set_ratio)
+    if match_confidence_full >= match_confidence_lem and match_confidence_full > confidence:
+        return fuzzy_match_full
+    elif match_confidence_lem > match_confidence_full and match_confidence_lem > confidence:
+        return fuzzy_match_full
+    else:
+        return league
