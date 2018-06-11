@@ -39,16 +39,15 @@ def connect_to_geocode_api(key=config.google_api_key):
     return GoogleV3(api_key=key)
 
 
-def get_names(sheet):
+def get_names(tab_values):
     """
     Takes the Profile tab and extracts the official's set of names.
-    :param sheet: the opened Google sheet object
+    :param tab_values: the 2-D array from the Google sheet Profile tab
     :return: a list of names
     """
-    tab = sheet.worksheet('Profile')
-    pref_name = tab.acell('B2').value
-    derby_name = tab.acell('B4').value
-    legal_name = tab.acell('B5').value
+    pref_name = tab_values[1][1]
+    derby_name = tab_values[3][1]
+    legal_name = tab_values[4][1]
     if not pref_name and not derby_name:
         pref_name = legal_name
         derby_name = legal_name
