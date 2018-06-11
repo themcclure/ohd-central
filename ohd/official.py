@@ -122,6 +122,8 @@ class Game:
 
         # validate the vital stuff
         assn = unicode(raw_row[6].strip())
+        if not assn:
+            assn = 'Other'  # replace an empty association field with the value "Other"
         gtype = unicode(raw_row[7].strip())
         role = unicode(raw_row[8].strip())
         if assn and gtype and role:
@@ -133,7 +135,7 @@ class Game:
 
         # If any of the vital data is not "standard" then mark the game as non-standard
         if assn not in assns:
-            self.standard = False
+            self.standard = False  # TODO: currently "Other" games will appear in the standard list
         if gtype not in types:
             self.standard = False
         if role not in roles:

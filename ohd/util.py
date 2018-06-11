@@ -472,7 +472,7 @@ def match_league_lemma(league, canonical=config.locations, confidence=90):
     # for testing, re-lemmaize the canonical list each run.
     import spacy
     nlp = spacy.load('en')
-    for k,v in canonical.items():
+    for k, v in canonical.items():
         lem_name = u' '.join([t.lemma_ for t in nlp(unicode(k)) if not t.is_stop and t.lemma_ not in my_stop_list])
         if lem_name not in canonical.keys():
             canonical[lem_name] = v

@@ -8,3 +8,4 @@ fuzzywuzzy==0.16.0
 python-Levenshtein==0.12.0
 geojson==2.3.0
 geopy==1.11.0
+spacy==2.0.11
