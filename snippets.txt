@@ -1,3 +1,39 @@
+# Quick test load from console
+import ohd, datetime, time
+ohd.config.cred_file='./service-account.json'
+ohd.config.google_api_delay = 1
+
+register_id = '1mH2Sui25qqrGt0x8k_KuL1BONsZ3rOPCIurECnX3Jxw'  # real test register
+tab_name = 'Test History Register'
+# tab_name = 'History Register'
+
+start = datetime.datetime.now()
+olist = ohd.load_register(doc_id=register_id, tab_name=tab_name, cred_file=ohd.config.cred_file)
+o = list()
+for off in ohd.register.ohd_conn_generator(olist, cred_file=ohd.config.cred_file):
+    otemp = ohd.register.load_official(off)
+    if otemp:
+        o.append(otemp)
+    else:
+        print(u"This document wasn't loaded {}".format(off.doc_id))
+
+print u'Officials loaded, there are {} in the list, for a total of {} games'.format(len(o), reduce(lambda x, y: x+y, [len(x.games) for x in o]))
+print u'Officials loaded, there are {} in the list, {}% with game errors'.format(len(o), round(reduce(lambda x, y: x+y, [1 for x in o if x.games_with_errors_count > 0])*1.0/len(o)*100.0,0))
+step = datetime.datetime.now()
+print u'Full loading took {}'.format(step - start)
+query_string = [{'standard': [True], 'assn': ['WFTDA', 'MRDA']},
+                {'type': ['Other'], 'role': ['THR', 'ATHR', 'THSNO', 'ATHNSO']},
+                {"start": start.date(), "interval": 12, "max_interval": 5}]
+for off in o:
+    qgames = ohd.util.query_history(off.positions, *query_string)
+    if len(qgames[0]) > 0:
+        print u'{}\'s breakdown of {} is {}'.format(off.pref_name, qgames[0][0].__class__, map(len, qgames))
+    else:
+        print u'{} has an empty games history'.format(off.pref_name)
+print u'Processing took an extra {}'.format(datetime.datetime.now() - step)
+
+
+
 # Code snippet for interacting with the loaded Official objects
 import ohd, datetime
 start = datetime.datetime.now()

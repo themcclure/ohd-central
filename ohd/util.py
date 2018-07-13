@@ -7,15 +7,197 @@ from oauth2client.service_account import ServiceAccountCredentials
 # import googlemaps
 import re
 import datetime
+import time
 from dateutil.parser import parse
 from dateutil import relativedelta
 from defaultlist import defaultlist
+from numpy import array
 # OHD specific imports
 from ohd import config
+
 from geopy.geocoders import GoogleV3
 # from geopy.distance import vincenty as distance
 from geojson import Point, Feature, FeatureCollection
 from fuzzywuzzy import process, fuzz
+
+
+def google_authorize_decorator(func):
+    """
+    Decorator to enforce authentication for access to the Google APIs
+    """
+    def inner(*args, **kwargs):
+        # print(u'Checking Auth')
+        if not args[0].still_connected():
+            print(u'Reauthorizing')
+            args[0].api['auth_error_count'] += 1
+            args[0].reauthenticate()
+        return func(*args, **kwargs)
+    return inner
+
+
+def google_retry_api_decorator(func):
+    """
+    Decorator to retry any temporarily failed calls to the Google APIs - backoff retries until success of fatal error
+    """
+    def inner(*args, **kwargs):
+        # Go through the Google Sheet and load it. This might take several attempts depending on Google API runtime errors
+        done = False
+        while not done:
+            # print(u'Wrapping the API call')
+            try:
+                # print(u"Trying the func: {}".format(func.__name__))
+                return func(*args, **kwargs)
+            except gspread.exceptions.GSpreadException as e:
+                err_fatal = True
+                if hasattr(e, 'response'):
+                    if hasattr(e.response, 'status_code'):
+                        if e.response.status_code == 429:
+                            # quota exceeded, try again after a pause
+                            err_fatal = False
+                            args[0].api['quota_error_count'] += 1
+                            if args[0].api['last_error_id'] == args[0].doc_id:
+                                args[0].api['delay'] = args[0].api['delay'] + args[0].api['delay_default']  # delay longer if this is repeated error on the same doc
+                            else:
+                                args[0].api['delay'] = args[0].api['delay_default']
+                            args[0].api['last_error_id'] = args[0].doc_id
+                            print(u"XX Pausing for quota on {} for {} seconds".format(args[0].doc_id, args[0].api['delay']))
+                            time.sleep(args[0].api['delay'])
+                        elif e.response.status_code == 503:
+                            # resource unavailable, try again after a big pause
+                            # I don't know what causes this error... could just be internet connection issues?
+                            err_fatal = False
+                            args[0].api['unavailable_error_count'] += 1
+                            if args[0].api['last_error_id'] == args[0].doc_id:
+                                args[0].api['delay'] = args[0].api['delay'] + args[0].api['delay_default']  # delay longer if this is repeated error on the same doc
+                            else:
+                                args[0].api['delay'] = args[0].api['delay_default']
+                            args[0].api['last_error_id'] = args[0].doc_id
+                            print(u"XX Pausing for availability on {} for {} seconds".format(args[0].doc_id, args[0].api['delay']))
+                            time.sleep(args[0].api['delay'])
+                        elif e.response.status_code == 401:
+                                # authentication token has expired, re-auth and try again
+                                # gc = util.authenticate_with_google(cred_file)
+                                # history = gc.open_by_key(doc_id)
+                                # err_fatal = False
+                                # err_auth += 1
+                                # print u"XX Re-authenticating on {}".format(doc_id)
+                                # last_paused_on = doc_id
+                                # time.sleep(delay)
+                                print(u"According to decorator precedence, this Exception can't be reached")
+                if err_fatal:
+                    done = True
+                    print u"Can't proceess doc_id {} because: {}".format(args[0].doc_id, e.message)
+            except Exception as e:
+                done = True
+                print u"Can't proceess doc_id {} because of generic error: {}".format(args[0].doc_id, e.message)
+    return inner
+
+
+class GoogleSheet(object):
+    """
+    This object manages all the read/write and authentication controls to access a Google Sheet.
+    """
+    def __init__(self, doc_id, cred_file=None, api_delay=None):
+        """
+        Creates the management object and opens the sheet, using the given credentials
+        :param doc_id: the Google Sheet ID to use
+        :param cred_file: the file containing the Google credentials to use to authenticate
+        :param api_delay: the number of seconds to pause between API retries
+        """
+        # process default arguments
+        if cred_file is None:
+            cred_file = config.cred_file
+        if api_delay is None:
+            api_delay = config.google_api_delay
+
+        # start the meat of the function
+        # basic initialization
+        self.doc_id = doc_id
+        self.cred_file = cred_file
+        self.api = dict()
+        self.api['delay'] = api_delay
+        self.api['delay_default'] = api_delay
+        self.api['last_error_id'] = ''
+        self.api['quota_error_count'] = 0
+        self.api['auth_error_count'] = 0
+        self.api['unavailable_error_count'] = 0
+        self.sheets = list()
+        self.version = None
+        # setting up the Googley bits
+        self._connection = authenticate_with_google(self.cred_file)
+        self._file = self._connection.open_by_key(doc_id)
+        self.init_sheet()
+
+    @google_authorize_decorator
+    @google_retry_api_decorator
+    def init_sheet(self):
+        """
+        initialize the object's Google Sheet data in a safe manner
+        """
+        self.sheets = [x.title for x in self._file.worksheets()]
+        self.version = self.template_version()
+
+    def still_connected(self):
+        """
+        Checks the private connection details to see if the authenticated connection to the Google API is still valid
+        """
+        return not self._connection.auth.access_token_expired
+
+    def reauthenticate(self):
+        """
+        Re-authenticates with the Google API
+        """
+        # TODO: implement keepalive in the util, since this is taking time: https://stackoverflow.com/questions/23568907/python-gspread-google-spreadsheet-keeping-connection-alive
+        self._connection = authenticate_with_google(self.cred_file)
+        self._file = self._connection.open_by_key(self.doc_id)
+
+    @google_authorize_decorator
+    @google_retry_api_decorator
+    def get_tab_data(self, tab_name, array_format=False):
+        """
+        Returns a read-only copy of all the tab data, either in a list of a list or as a numpy array
+        :param tab_name: name of the tab to fetch
+        :param array_format: set to True to return a numpy array of the data
+        :return: returns a list of list of strings, or (if True) a numpy array
+        """
+        # print(u'Tab name: {}'.format(tab_name))
+        if array_format:
+            return array(self._file.worksheet(tab_name).get_all_values())
+        else:
+            return self._file.worksheet(tab_name).get_all_values()
+
+    @google_authorize_decorator
+    @google_retry_api_decorator
+    def template_version(self):
+        """
+        Introspects the Google Sheet and tries to determine a history template version number
+        :return: template (major) version number or None if not determinable
+        """
+        if 'Learn More' in self.sheets:
+            return 3
+        elif 'WFTDA Summary' in self.sheets:
+            return 1
+        elif 'Summary' in self.sheets:
+            if 'WFTDA Referee' in self.sheets or 'WFTDA NSO' in self.sheets:
+                # this is likely a v1 history doc but it's been modified to change the WFTDA Summary tab name
+                return None
+            elif 'Instructions' not in self.sheets:
+                # this is a likely a v2 history doc it's been modified to delete the instructions tab (a no no)
+                return None
+            instruction_vals = self.get_tab_data('Instructions')
+            if instruction_vals[0][0] == 'Loading...':
+                # found one instance where the Instructions tab was showing "loading" - at the moment this will only happen on the new sheets
+                return 2
+            elif 'Last Revised 2015' in instruction_vals[103][0]:
+                return 2
+            elif 'Last Revised 2016' in instruction_vals[103][0]:
+                return 2
+            elif 'Last Revised 2017-01-05' in instruction_vals[103][0]:
+                return 2
+            else:
+                return None
+        else:
+            return None
 
 
 def authenticate_with_google(cred_file):
@@ -24,18 +206,24 @@ def authenticate_with_google(cred_file):
     :return: Authorized gspread connection
     """
     scope = ['https://spreadsheets.google.com/feeds']
+    # scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
 
     credentials = ServiceAccountCredentials.from_json_keyfile_name(cred_file, scope)
 
     return gspread.authorize(credentials)
 
 
-def connect_to_geocode_api(key=config.google_api_key):
+def connect_to_geocode_api(key=None):
     """
     Takes the Google API key and returns a geocode api connection
     :param key: Google API key
     :return: connection to the geocode service
     """
+    # process default arguments
+    if key is None:
+        key = config.google_api_key
+
+    # start the meat of the function
     return GoogleV3(api_key=key)
 
 
@@ -58,6 +246,7 @@ def get_names(tab_values):
     return [pref_name, derby_name, legal_name]
 
 
+# TODO: Deprecated
 def get_version(sheet):
     """
     Check the info tabs and make a determination about which version of the officiating history document is being used.
@@ -212,7 +401,7 @@ def normalize_officials_location(geocoding_service, location, league_affiliation
     if location:
         working_location = location
     elif league_affiliation:
-        # TODO: This is overkill - assuming several most people don't have multiple affiliations, maybe fuzzy matching here?
+        # NOTE: This is overkill - assuming several most people don't have multiple affiliations, maybe fuzzy matching here?
         if config.locations:
             working_location = [l for l in league_affiliation.split(',') if l.strip() in config.locations.keys()][0]
     else:
@@ -227,7 +416,7 @@ def normalize_officials_location(geocoding_service, location, league_affiliation
 
 # TODO: refactor into spatial module
 # TODO: refactor to pass a google connection, not authenticate each time
-def load_locations(cred_file='./service-account.json', read_only=True):
+def load_locations(cred_file=None, read_only=True):
     """
     Queries the WFTDA League membership sheet for locations, and returns a dict of league name and location information.
     The source Google sheet is also updated with the latest location data.
@@ -236,6 +425,11 @@ def load_locations(cred_file='./service-account.json', read_only=True):
     :param read_only: If this is True, then alert the user but don't update the locations file, even if there are changes
     :return: a dict of league name and location info
     """
+    # process default arguments
+    if cred_file is None:
+        cred_file = config.cred_file
+
+    # start the meat of the function
     start = datetime.datetime.now()
     doc_id = '1Nv0UMugPqGEaDAwdz8dQtCIgzlR8gfM3i6Tp7ZSXzjo'
     gc = authenticate_with_google(cred_file)
@@ -435,7 +629,7 @@ def normalize_location_from_geocode(location, long_names=True):
     return [place_id, city, state, country, latitude, longitude]
 
 
-def match_league(league, canonical=config.locations, confidence=90):
+def match_league(league, canonical=None, confidence=90):
     """
     Matches a provided league name against a list. Returns an exact match, otherwise find a high confidence fuzzy match,
     and if there isn't a match that is higher than the confidence threshold, then return the originally provided name.
@@ -444,6 +638,11 @@ def match_league(league, canonical=config.locations, confidence=90):
     :param confidence: the minimum acceptable confidence for a match
     :return: best matched league
     """
+    # process default arguments
+    if canonical is None:
+        canonical = config.locations
+
+    # start the meat of the function
     tokens_common_words = ['Derby', 'Girls', 'Rollers', 'Roller', 'Rollergirls']
 
     if league in canonical:
@@ -458,7 +657,7 @@ def match_league(league, canonical=config.locations, confidence=90):
         return league
 
 
-def match_league_lemma(league, canonical=config.locations, confidence=90):
+def match_league_lemma(league, canonical=None, confidence=90):
     """
     Matches a provided league name against a list. Returns an exact match, otherwise find a high confidence fuzzy match,
     and if there isn't a match that is higher than the confidence threshold, then return the originally provided name.
@@ -467,6 +666,11 @@ def match_league_lemma(league, canonical=config.locations, confidence=90):
     :param confidence: the minimum acceptable confidence for a match
     :return: best matched league
     """
+    # process default arguments
+    if canonical is None:
+        canonical = config.locations
+
+    # start the meat of the function
     my_stop_list = ['derby', 'girl', 'rollers', 'roller', 'rollergirl', 'rollergirls', 'rollergirlz', 'girlz']
 
     # for testing, re-lemmaize the canonical list each run.
@@ -492,3 +696,14 @@ def match_league_lemma(league, canonical=config.locations, confidence=90):
         return fuzzy_match_full
     else:
         return league
+
+
+if __name__ == '__main__':
+    doc_id = '1mH2Sui25qqrGt0x8k_KuL1BONsZ3rOPCIurECnX3Jxw'  # real test register
+    cred_file = '../service-account.json'
+    g = GoogleSheet(doc_id, cred_file)
+    tvalues = g.get_tab_data('History Register')
+    if tvalues:
+        print(u'Got {} values'.format(len(tvalues)))
+    else:
+        print(u'Got no values')

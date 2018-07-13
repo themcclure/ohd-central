@@ -35,30 +35,37 @@ class Official:
         self.games = []
         self.positions = []
         self.events = dict()
+        self.games_with_errors = dict()
+        self.games_with_errors_count = 0
 
     def __repr__(self):
         return '<name: {}, refcert {}, nsocert: {}, games {}>'.format(self.pref_name.encode('utf-8', 'ignore'),
                                                                       self.refcert, self.nsocert, len(self.games))
 
-    def add_history(self, history_tab):
+    def add_history(self, history_vals):
         """
         Takes the entire Game History tab and runs through it, adding each game to the Official
-        :param history_tab: opened Game History tab
-        :return: None
+        :param history_vals: a list of lists from the Game History tab
         """
-        # Get all the rows apart from the top line (header)
-        history = history_tab.get_all_values()[1:]
         # Sort list by date (descending)
-        history.sort(reverse=True)
+        history_vals.sort(reverse=True)
         # Iterate through the official's history, one at a time until there's no more
-        for item in history:
+        for item in history_vals:
             try:
+                # the row is entirely empty, then skip this row
+                if not any(item):
+                    continue
                 # Validation: Is it a valid date?
                 gdate = parse(item[0]).date()  # This accepts many forms of date format, but where ambiguous it assumes m/d/y over d/m/y
                 self.add_game(Game(gdate, item))
             except Exception as e:
                 # This game isn't valid, go to the next one
-                print u'Game not valid because: {}'.format(e)
+                # print u'Game not valid because: {}'.format(e)
+                if e not in self.games_with_errors.keys():
+                    self.games_with_errors[e] = list()
+                self.games_with_errors[e].append(item)
+                self.games_with_errors_count += 1
+        print(u"Found {} errors, of type {}".format(self.games_with_errors_count, self.games_with_errors.keys()))
 
     def add_game(self, game):
         """
@@ -135,7 +142,7 @@ class Game:
 
         # If any of the vital data is not "standard" then mark the game as non-standard
         if assn not in assns:
-            self.standard = False  # TODO: currently "Other" games will appear in the standard list
+            self.standard = False
         if gtype not in types:
             self.standard = False
         if role not in roles:
