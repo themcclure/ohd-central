@@ -1,164 +1,119 @@
-"""Open the History Register, then load all the history docs listed in the Register."""
+"""
+This module contains all the History Register management functions.
+"""
 
 __author__ = 'hammer'
 
-import gspread
+from .config import conf
+from . import util
+
 import datetime
-import time
-# OHD specific imports
-import util
-import official
-import config
+import pandas as pd
+# import pkg_resources as pr
+from pathlib import Path
 
 
-def load_register(doc_id='1vrvYjcNLTdWypfeWjMUyMuo3LVtX80CKMRY-3SegdDw', tab_name='History Register', id_col_num=4,
-                  id_col_header=True, cred_file=None):
+# TODO: add a load time to each of the doc process requests into config.google.runtime_api or _cache
+def load_register(doc_id=None, tab_name=None, force_refresh=False):
     """
-    Opens a History Register google document, with a specified Google Sheet ID, and loads the doc IDs from the specified
+    Loads the History Register google document, with a specified Google Sheet ID, and loads the doc IDs from the specified
     column. By default this will load the central OffCom History Register.
-    :param doc_id: Google Sheet ID of the History Register
-    :param tab_name: Google Sheet ID of the History Register
-    :param id_col_num: The column in the Register that contains the Google Sheet IDs of the individual history docs
-    :param id_col_header: Does the column in the Register that contains the Google Sheet IDs have a header row?
-    :param cred_file: The location of JSON file with the service account credentials in it
-    :return: A list of loaded history doc IDs from the Register
+    :param doc_id: explicitly set the Google Sheet ID of the History Register
+    :param tab_name: explicitly set the Google Sheet tab name of the History Register
+    :param force_refresh: if set to True, will force loading from the Google Doc rather than the cache
+    :return: A DataFrame of the entire History Register
     """
-    # process default arguments
-    if cred_file is None:
-        cred_file = config.cred_file
-
-    # start the meat of the function
     start = datetime.datetime.now()
-    r = util.GoogleSheet(doc_id, cred_file=cred_file)
-    rdata = r.get_tab_data(tab_name, array_format=True)
+    last_checkpoint = datetime.datetime.now()
+    conf.logger.debug(f"Starting to load the {conf.runtime.label} Register")
+    # process default arguments
+    reg_doc_id = doc_id
+    reg_tab = tab_name
+    if reg_doc_id is None:
+        reg_doc_id = conf.runtime.reg_id
+    if reg_tab is None:
+        reg_tab = conf.runtime.reg_tab_name
+    needs_refresh = force_refresh
 
-    # authenticate with google and open their geocoding service
-    # google_api = util.connect_to_geocode_api()
+    # load the Register from cache
+    cache = conf.runtime.cache
+    register = cache['register']
+    if register.empty:
+        needs_refresh = True  # flag for refresh if the cache is not present
+        conf.logger.debug("Need to refresh Register because the cache is empty")
 
-    # Collect the list of Google Sheet IDs for the officials in the Register
-    # remove header row, if there is one:
-    if id_col_header:
-        doc_ids = list(rdata[1:, id_col_num])
+    # flag for refresh if the Register cache is too old
+    stale_threshold_date = datetime.datetime.now() - datetime.timedelta(days=conf.runtime.stale_days)
+    if 'register' not in cache['metadata'].index or cache['metadata'].loc['register']['last_update'] < stale_threshold_date:
+        needs_refresh = True
+        conf.logger.debug("Need to refresh Register because the cache is too old")
+
+    conf.logger.debug(f"Loading the Register cache took {(datetime.datetime.now() - last_checkpoint).total_seconds():.2f}s")
+    last_checkpoint = datetime.datetime.now()
+
+    # if flagged for refresh and if there is a service account credential configured, then load the Register from Google and update the cache
+    cred_file = conf.google.cred_file
+    if needs_refresh and cred_file is not None and cred_file.exists():
+        client = util.authenticate_with_google()  # initialize the API connection to Google Docs
+        reg_wb = client.open_by_key(reg_doc_id)
+        register = util.read_tab_as_df(reg_wb, reg_tab, num_columns=len(conf.runtime.reg_tab_list))
+        conf.runtime.cache['metadata'] = pd.DataFrame({'last_update': datetime.datetime.now()}, index=['Register'])  # Refreshing metadata after load
+        conf.runtime.cache['register'] = register  # update the cache
+        conf.logger.debug(f"Refreshing Register and saving {len(register)} to {conf.runtime.cache_file}")
+        time_to_load = datetime.datetime.now() - last_checkpoint
+        conf.google.runtime_api.append(time_to_load)
+        conf.logger.debug(f"Loading the Register from doc took {time_to_load.total_seconds():.2f}s")
+    elif needs_refresh and cred_file is None:
+        conf.logger.warning("Need to refresh Register but no Google credential file was available")
+    elif needs_refresh and not cred_file.exists():
+        conf.logger.warning(f"Need to refresh Register but tge Google credential file does not exist {cred_file}")
     else:
-        doc_ids = list(rdata[:, id_col_num])
-    doc_ids = filter(None, doc_ids)  # remove blank entries from the list
-    print u'Getting list of {} Register IDs took {}'.format(len(doc_ids), datetime.datetime.now() - start)
+        conf.logger.debug(f"Using the cached Register with {len(register)} items")
 
-    return doc_ids
+    conf.logger.info(f"Finished {__name__} in {(datetime.datetime.now() - start).total_seconds():.2f}s")
 
-
-def load_official(history):
-    """
-    Takes a single OHD doc connection and loads the Official. Returns the successfully loaded Official.
-    :param history: the GoogleSheet object for the OHD to load
-    :return: The populated Official object
-    """
-    start = datetime.datetime.now()
-
-    # Go through the Google Sheet and load the data from it, tab at a time.
-    meta_values = history.get_tab_data('Metadata')
-    tmpl_ver = meta_values[3][0]
-    most_recent_game = meta_values[5][0]
-    last_changed = meta_values[7][0]
-    profile_values = history.get_tab_data('Profile')
-    [pref_name, derby_name, legal_name] = util.get_names(profile_values)
-    print(u'Off: {}, ver {}, most recent game {}, setting of "now" in their metadata tab: {}'.format(pref_name, tmpl_ver, most_recent_game, last_changed))
-    off = official.Official(history.doc_id)
-    off.pref_name = unicode(pref_name)
-    off.derby_name = unicode(derby_name)
-    off.legal_name = unicode(legal_name)
-    off.officiating_number = profile_values[3][3]
-    off.refcert = util.normalize_cert(profile_values[7][1])
-    off.nsocert = util.normalize_cert(profile_values[9][1])
-    # TODO: cert endorsements
-    # off.refcert_endorsements = util.normalize_endorsements(profile_values[8][1])
-    # off.nsocert_endorsements = util.normalize_endorsements(profile_values[10][1])
-    # TODO: normalize pronouns
-    off.pronouns = profile_values[2][1]
-    off.league_affiliation = profile_values[6][1]
-    # TODO: geo location magic goes here
-    off.location = profile_values[5][1]
-    # TODO: This is offline until the geocoding bit is fixed - new product offering
-    # off.locationref = util.normalize_officials_location(google_api, off.location, off.league_affiliation)
-    # add all the games from the Game History tab, minus the header row
-    off.add_history(history.get_tab_data('Game History')[1:])
-
-    # profiling and testing/verification section
-    print u'Loading {} took {}'.format(off.pref_name, datetime.datetime.now() - start)
-
-    # return the loaded official
-    return off
-
-
-def ohd_conn_generator(id_list, cred_file=None):
-    """
-    This ia a Generator that takes a list of OHD doc IDs and iterates through it and yields a GoogleSheet object of
-    each OHD, in turn, from the list.
-    Returns the list of the attempted OHD updates, and the result of the attempt.
-    This will ideally replace the
-    :param id_list: list of OHD doc IDs to load
-    :param cred_file: The JSON file with the service account credentials in it
-    :return: yeilds each live GoogleSheet object in turn
-    """
-    # process default arguments
-    if cred_file is None:
-        cred_file = config.cred_file
-
-    # start the meat of the function
-    # initializing run/error tracking variables
-    err_quota = 0
-    err_unavailable = 0
-    err_auth = 0
-
-    # Go through the list of Google Sheet IDs and yield each one in turn
-    for doc in id_list:
-        history = util.GoogleSheet(doc, cred_file)
-        # currently this only servers v3 sheets, so skip over any that aren't v3
-        if history.version != 3:
-            print u'Found a doc with the wrong version: {}'.format(history.doc_id)
-            continue
-
-        yield history
-        err_quota += history.api['quota_error_count']
-        err_unavailable += history.api['unavailable_error_count']
-        err_auth += history.api['auth_error_count']
-
-    # summarize the failures encountered
-    print u"Found {} Quota errors, {} Resource Unavailable errors and {} Auth Token Expired errors.".format(err_quota, err_unavailable, err_auth)
-
-
-if __name__ == '__main__':
-    start = datetime.datetime.now()
-    # get the location info
-    # locations = util.load_locations(cred_file='../service-account.json')
-
-    # doc_id = '1vrvYjcNLTdWypfeWjMUyMuo3LVtX80CKMRY-3SegdDw'  # production register
-    doc_id = '1mH2Sui25qqrGt0x8k_KuL1BONsZ3rOPCIurECnX3Jxw'  # real test register
-    tab_name = 'Test History Register'
-    # tab_name = 'History Register'
-    config.cred_file = '../service-account.json'
-    config.google_api_delay = 1
-
-    olist = load_register(doc_id=doc_id, tab_name=tab_name)
-    o = list()
-    for off in ohd_conn_generator(olist):
-        otemp = load_official(off)
-        if otemp:
-            o.append(otemp)
-        else:
-            print(u"This document wasn't loaded {}".format(off.doc_id))
-
-    print u'Officials loaded, there are {} in the list, for a total of {} games'.format(len(o), reduce(lambda x, y: x+y, [len(x.games) for x in o]))
-    print u'Officials loaded, there are {} in the list, {}% with game errors'.format(len(o), round(reduce(lambda x, y: x+y, [1 for x in o if x.games_with_errors_count > 0])/len(o)*100.0, 0))
-    step = datetime.datetime.now()
-    print u'Full loading took {}'.format(step - start)
-    # query_string = [{'standard': [True], 'assn': ['WFTDA', 'MRDA']},
-    #                 {'type': ['Other'], 'role': ['THR', 'ATHR', 'THSNO', 'ATHNSO']},
-    #                 {"start": start.date(), "interval": 12, "max_interval": 5}]
-    # for off in o:
-    #     qgames = util.query_history(off.positions, *query_string)
-    #     if len(qgames[0]) > 0:
-    #         print u'{}\'s breakdown of {} is {}'.format(off.pref_name, qgames[0][0].__class__, map(len, qgames))
-    #     else:
-    #         print u'{} has an empty games history'.format(off.pref_name)
-    # print u'Processing took an extra {}'.format(datetime.datetime.now() - step)
+    return register
+#
+#
+# def load_histories(id_list: pd.Series):
+#     """
+#     Loads the history docs for the officials passed in to the function.
+#     The docs will be loaded from the cache, if present and current. Any missing officials will be loaded via the API, if
+#     there are credentials present, otherwise they will be omitted from the results.
+#     A tuple will be returned containing a DataFrame for the officials' general data, and another DataFrame of the combined
+#     Game History data (multi-indexed by date and official's ID).
+#     :param id_list: an array-like list of OHD Google Doc IDs
+#     :return: a tuple: (DataFrame of Officials data, DataFrame of Game History data)
+#     """
+#     start = datetime.datetime.now()
+#     logger.debug(f"Starting to load the history data")
+#
+#     officials = pd.DataFrame(columns=config.data['history_officials_data_list'])
+#     games = pd.DataFrame(columns=config.data['history_tab_list'])
+#
+#     # TODO load the cache (probably needs a helper function, included in the above) - possibly in read_tab_as_df()
+#     client = config.google['client']
+#     if not client:
+#         client = util.authenticate_with_google()
+#
+#     last_checkpoint = datetime.datetime.now()
+#     for index, item in id_list.items():
+#         logger.debug(f"Attempting to load Official ID {item}")
+#         try:
+#             off_wb = client.open_by_key(item)
+#             off_gh = util.read_tab_as_df(off_wb, 'Game History', num_columns=len(config.data['history_tab_list']))
+#
+#             officials.loc[item] = item
+#             if not off_gh.empty:
+#                 logger.debug(f"ID = {item}, shape = {off_gh.shape}")
+#                 games.loc[item] = off_gh
+#             else:
+#                 logger.warning(f"Couldn't add game history for {item}. Length = {len(off_gh)} and columns are {off_gh.columns}")
+#         except Exception as e:
+#             logger.warning(f"Couldn't load document {item} because of {e}")
+#             continue
+#         time_to_load = datetime.datetime.now() - last_checkpoint
+#         config.google['runtime_api'].append(time_to_load)
+#
+#     logger.info(f"Finished {__name__} in {(datetime.datetime.now() - start).total_seconds():.2f}s")
+#     return officials, games

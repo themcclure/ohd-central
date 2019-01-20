@@ -106,7 +106,8 @@ venv.bak/
 .mypy_cache/
 
 # credentials
-**/service-account.json
+data/service-account.json
+data/keys.json
 
 # IDE
 /.idea

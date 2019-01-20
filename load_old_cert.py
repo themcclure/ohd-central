@@ -22,7 +22,7 @@ if __name__ == '__main__':
     # get the location info
     locations = ohd.util.load_locations(cred_file='./service-account.json')
     ohd.config.locations = locations
-    print u'Locations took {}'.format(datetime.datetime.now() - start)
+    print('Locations took {}'.format(datetime.datetime.now() - start))
     step = datetime.datetime.now()
 
     gc = ohd.util.authenticate_with_google('./service-account.json')
@@ -70,7 +70,7 @@ if __name__ == '__main__':
                     if off_list[offkey]["refcert"] > off_list[offkey]["maxcert"]:
                         off_list[offkey]["maxcert"] = off_list[offkey]["refcert"]
     num_refs = len(off_list)
-    print u'Found {} Refs'.format(num_refs)
+    print("Found {} Refs".format(num_refs))
     # for l in off_list.keys()[10:20]:
     #     print off_list[l]
 
@@ -108,9 +108,9 @@ if __name__ == '__main__':
                     if off_list[offkey]["nsocert"] > off_list[offkey]["maxcert"]:
                         off_list[offkey]["maxcert"] = off_list[offkey]["nsocert"]
 
-    print u'Found {} NSOs'.format(len(off_list) - num_refs)
-    print u'OldCert alone took {} and skipped {} Independents and {} with no known league'.format(datetime.datetime.now() - step,
-                                              offs_skipped['Independent League'], offs_skipped['Unknown League'])
+    print('Found {} NSOs'.format(len(off_list) - num_refs))
+    print('OldCert alone took {} and skipped {} Independents and {} with no known league'.format(datetime.datetime.now() - step,
+                                              offs_skipped['Independent League'], offs_skipped['Unknown League']))
     step = datetime.datetime.now()
 
     # now to spit it out as a geoJSON file
@@ -128,13 +128,13 @@ if __name__ == '__main__':
         try:
             longlat = (float(off_list[off]['longitude']), float(off_list[off]['latitude']))
         except Exception as e:
-            print u'Skipping {}, it has no lat/long. Actual error was:: {}'.format(off_list[off]['description'], e)
+            print('Skipping {}, it has no lat/long. Actual error was:: {}'.format(off_list[off]['description'], e))
             continue
         f = Feature(geometry=Point(longlat), properties=props)  # GeoJSON wants long/lat in that order
         off_features.append(f)
     off_collection = FeatureCollection(off_features)
     # print off_collection
-    print u'GeoJSON took {}'.format(datetime.datetime.now() - step)
+    print('GeoJSON took {}'.format(datetime.datetime.now() - step))
     step = datetime.datetime.now()
 
     # now get an array of radians for spatial analysis
@@ -142,7 +142,7 @@ if __name__ == '__main__':
     for f in off_features:
         radian_arr.append(map(radians, f['geometry']['coordinates']))
     # print radian_arr
-    print u'Radian conversion took {}'.format(datetime.datetime.now() - step)
+    print('Radian conversion took {}'.format(datetime.datetime.now() - step))
     step = datetime.datetime.now()
 
     # map out the population of officials (quick & dirty edition)
@@ -180,6 +180,6 @@ if __name__ == '__main__':
         output = csv.writer(csvfile)
         for l in leaguepop:
             output.writerow(leaguepop[l])
-    print u'Location population of officials took {}'.format(datetime.datetime.now() - step)
+    print('Location population of officials took {}'.format(datetime.datetime.now() - step))
     step = datetime.datetime.now()
 

@@ -5,6 +5,7 @@ __author__ = 'hammer'
 
 import ohd
 import datetime
+from functools import reduce
 
 
 if __name__ == '__main__':
@@ -23,15 +24,15 @@ if __name__ == '__main__':
     officials = list()
     for history in ohd.ohd_conn_generator(olist):
         officials.append(ohd.register.load_official(history))
-        print u'Processing {} took {}'.format(len(officials), datetime.datetime.now() - start)
+        print(f"Processing {len(officials)} took {datetime.datetime.now() - start}")
 
     inactive_list = list()
     for o in officials:
         if len(o.games) > 0:
             g = reduce(lambda a, b: a.gdate > b.gdate and a or b, o.games)
             if g.gdate < datetime.date(2018, 1, 1):
-                inactive_list.append([o.pref_name,g.gdate])
+                inactive_list.append([o.pref_name, g.gdate])
         else:
             # add the history docs without any games to the list
-            inactive_list.append([o.pref_name,0])
-    print inactive_list
+            inactive_list.append([o.pref_name, 0])
+    print(inactive_list)

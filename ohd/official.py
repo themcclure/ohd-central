@@ -1,209 +1,102 @@
 """
-Module for reading, storing and processing officials data.
+Module for reading, storing and processing officials d2.
 """
 __author__ = 'hammer'
 
+from .config import conf
+from . import util
+
 import datetime
-from dateutil.parser import parse
-# CONFIG:
-# list of known Associations, Game Types and Roles
-import config
-assns = config.assns
-types = config.types
-roles = config.roles
+import pandas as pd
+import pygsheets.exceptions as pygerror
+from googleapiclient.errors import HttpError
 
 
-class Official:
-    """The basic official object.
-    Contains data about that official, and the set of games they've worked.
-    It contains:
-        a list of Games officiated
-        a list of Positions officiated
-        a list of Events officiated
+def parse_officials_info(off_wb):
     """
-    def __init__(self, doc_id):
-        # basic stats/info about the official
-        self.key = doc_id
-        self.pref_name = ''
-        self.derby_name = ''
-        self.legal_name = ''
-        self.league_affiliation = ''
-        self.location = ''
-        self.locationref = (0, 0)
-        self.refcert = 0
-        self.nsocert = 0
-        self.games = []
-        self.positions = []
-        self.events = dict()
-        self.games_with_errors = dict()
-        self.games_with_errors_count = 0
+    This takes a OHD and creates a dict of the Official's Profile info for adding into a DataFrame row of all the
+    officials in the Register
+    :param off_wb: the Google Sheets object
+    :return: a dict of all the officials info
+    """
+    # ws = off_wb.worksheet_by_title('Profile')
+    df = util.read_tab_as_df(off_wb, 'Profile')
+    offinfo = dict()
+    offinfo['ID'] = off_wb.id
+    offinfo['Name_Preferred_raw'] = df.iloc[0, 1]
+    offinfo['Pronoun_raw'] = df.iloc[1, 1]
+    offinfo['Name_Derby'] = df.iloc[2, 1]
+    offinfo['Name_Legal'] = df.iloc[3, 1]
+    offinfo['Location_raw'] = df.iloc[4, 1]
+    offinfo['Affiliated_League_raw'] = df.iloc[5, 1]
+    offinfo['Cert_Ref_raw'] = df.iloc[6, 1]
+    offinfo['Endorsements_Ref_raw'] = df.iloc[7, 1]
+    offinfo['Cert_NSO_raw'] = df.iloc[8, 1]
+    offinfo['Endorsements_NSO_raw'] = df.iloc[9, 1]
+    offinfo['Officiating_Number'] = df.iloc[2, 3]
+    offinfo['Email_Address'] = df.iloc[3, 3]
+    offinfo['Phone_Number'] = df.iloc[4, 3]
+    offinfo['Insurance_Derby'] = df.iloc[5, 3]
+    offinfo['Association_Affiliations_raw'] = df.iloc[6, 3]
 
-    def __repr__(self):
-        return '<name: {}, refcert {}, nsocert: {}, games {}>'.format(self.pref_name.encode('utf-8', 'ignore'),
-                                                                      self.refcert, self.nsocert, len(self.games))
+    return offinfo
 
-    def add_history(self, history_vals):
-        """
-        Takes the entire Game History tab and runs through it, adding each game to the Official
-        :param history_vals: a list of lists from the Game History tab
-        """
-        # Sort list by date (descending)
-        history_vals.sort(reverse=True)
-        # Iterate through the official's history, one at a time until there's no more
-        for item in history_vals:
-            try:
-                # the row is entirely empty, then skip this row
-                if not any(item):
-                    continue
-                # Validation: Is it a valid date?
-                gdate = parse(item[0]).date()  # This accepts many forms of date format, but where ambiguous it assumes m/d/y over d/m/y
-                self.add_game(Game(gdate, item))
-            except Exception as e:
-                # This game isn't valid, go to the next one
-                # print u'Game not valid because: {}'.format(e)
-                if e not in self.games_with_errors.keys():
-                    self.games_with_errors[e] = list()
-                self.games_with_errors[e].append(item)
-                self.games_with_errors_count += 1
-        print(u"Found {} errors, of type {}".format(self.games_with_errors_count, self.games_with_errors.keys()))
 
-    def add_game(self, game):
-        """
-        Adds a Game to the official's history. Also triggers adding the Positions and Events relating to that Game
-        :param game: Game object
-        :return: None
-        """
-        # Add the Game to the history
-        self.games.append(game)
+def load_history(doc_id: str):
+    """
+    Load a single history doc from the Google Doc ID, and returns a tuple of DataFrames (officials information, game data)
+    :param doc_id: the Google Sheets ID
+    :return: a tuple of DataFrames (officials information, game data)
+    """
+    start = datetime.datetime.now()
+    conf.logger.debug(f"Starting to load the history data")
 
-        # Add the Positions for this Game to the history
-        self.add_position(game)
+    officials = pd.DataFrame(columns=conf.runtime.history_officials_data_list)
+    games = pd.DataFrame(columns=conf.runtime.history_tab_list)
+    # games = pd.DataFrame()
 
-        # Add the Events for this Game to the history
-        self.add_event(game)
+    client = conf.google.client
+    if not client:
+        client = util.authenticate_with_google()
 
-    def add_position(self, game):
-        """
-        Adds Positions (primary and secondary) to the official's history.
-        Triggered by add_game() and not expected to be run outside of that context.
-        :param game: Game object
-        """
-        # Add the primary Position to the history
-        self.positions.append(Position(game, 'p'))
-        # Add the secondary Position to the history (if there was one)
-        if game.role_secondary:
-            self.positions.append(Position(game, 's'))
+    last_checkpoint = datetime.datetime.now()
+    # TODO load the cache (probably needs a helper function, included in the above) - possibly in read_tab_as_df()
+    conf.logger.debug(f"Attempting to load Official ID {doc_id}")
+    try:
+        off_wb = client.open_by_key(doc_id)
+        # TODO: fail on bad version
 
-    def add_event(self, game):
-        """
-        Adds an Event to the officials' history. Also, if the event already exists, increments the number of games counter.
-        Triggered by add_game() and not expected to be run outside of that context.
-        :param game: Game object
-        """
-        if not game.event_name:
-            return
-        if game.event_name not in self.events.keys():
-            self.events[game.event_name] = Event(game.event_name, game)
+        officials.loc[doc_id] = parse_officials_info(off_wb)
+
+        # TODO: make this a function:
+        off_gh = util.read_tab_as_df(off_wb, 'Game History', num_columns=len(conf.runtime.history_tab_list))
+
+        # change the datatype of Date to be a date, and make the Date the index
+        if 'Date' not in off_gh.columns:
+            raise Exception(f"Couldn't load the Games History tab for {doc_id}.")
+        off_gh['Date'] = pd.to_datetime(off_gh['Date'])
+        off_gh = off_gh.set_index('Date')
+
+        if not off_gh.empty:
+            conf.logger.debug(f"ID = {doc_id}, shape = {off_gh.shape}")
+            games = off_gh
         else:
-            self.events[game.event_name].num_games += 1
-
-
-class Game:
-    """
-    Each official will have a history made up of many Games, which store the relevant information about each game.
-    Each Game can have one or two Positions and may have one Event (recorded separately).
-    """
-    # TODO: figure out how to differentiate game vs event based roles... eg a TH isn't a Game per-se but it IS an event based Position...
-    def __init__(self, gdate, raw_row):
-        # default "error" values
-        self.standard = True
-
-        # If the date is valid, then populate the data as supplied
-        if not isinstance(gdate, datetime.date):
-            raise Exception('Game Date is not a datetime: {}'.format(gdate))
-        self.gdate = gdate
-        # Is the raw list is actually a list, as expected
-        if not isinstance(raw_row, list):
-            raise Exception('Game data is not a list, instead it\'s a {}'.format(type(raw_row)))
-        self.raw_row = raw_row
-
-        # validate the vital stuff
-        assn = unicode(raw_row[6].strip())
-        if not assn:
-            assn = 'Other'  # replace an empty association field with the value "Other"
-        gtype = unicode(raw_row[7].strip())
-        role = unicode(raw_row[8].strip())
-        if assn and gtype and role:
-            self.assn = assn
-            self.type = gtype
-            self.role = role
+            conf.logger.warning(f"Can't add empty game history for {doc_id}.")
+        time_to_load = datetime.datetime.now() - last_checkpoint
+        conf.google.runtime_api.append(time_to_load)
+        # TODO: fix up the exceptions
+    except pygerror.WorksheetNotFound:
+        conf.logger.error(f"Worksheet was not found in {doc_id}")
+    except ValueError as e:
+        conf.logger.error(f"Mismatched value errors on {doc_id}, skipping it")
+        # TODO: figure out this error and fix it
+    except HttpError as e:
+        if e.resp['status'] in ['404']:
+            conf.logger.warning(f"Could not load document {doc_id} because of known HTTP error {e}")
         else:
-            raise Exception('Association, Type and/or Role is empty: {}'.format([raw_row[0]]+raw_row[6:9]))
+            conf.logger.warning(f"Could not load document {doc_id} because of unknown HTTP error {e}")
+    except Exception as e:
+        conf.logger.warning(f"Could not load document {doc_id} because of {e}, GH tab = {off_gh}")
 
-        # If any of the vital data is not "standard" then mark the game as non-standard
-        if assn not in assns:
-            self.standard = False
-        if gtype not in types:
-            self.standard = False
-        if role not in roles:
-            self.standard = False
-
-        # non-vital stuff, just record what they write
-        self.role_secondary = unicode(raw_row[9].strip())
-        if self.role_secondary and self.role_secondary not in roles:
-            self.standard = False
-
-        self.software = unicode(raw_row[10].strip())
-        # TODO: add valid software options to config and check them here
-
-        self.event_name = raw_row[1]
-        self.event_location = unicode(raw_row[2].strip())
-        self.event_host = (raw_row[3].strip())
-
-    def __repr__(self):
-        if self.standard:
-            return '<Game: Assn {}, Role {}>'.format(self.assn, self.role)
-        else:
-            return '<Game: Assn {}, Role {}, non-std>'.format(self.assn, self.role)
-
-
-class Position:
-    """
-    Each official will have a history made up of many Positions worked, each of which store the relevant information
-    about the game. Each Position can be primary or secondary.
-    """
-    def __init__(self, game, primacy):
-        self.gdate = game.gdate
-        self.assn = game.assn
-        self.type = game.type
-        self.role = game.role
-        self.software = game.software
-        self.standard = game.standard
-        self.primacy = primacy
-        self.raw_row = game.raw_row
-
-    def __repr__(self):
-        if self.standard:
-            return '<Position: Assn {}, Role {}>'.format(self.assn, self.role)
-        else:
-            return '<Position: Assn {}, Role {}, non-std>'.format(self.assn, self.role)
-
-
-class Event:
-    """
-    Each official will have a history made up of many Events worked, each of which store the relevant information
-    about the game
-    """
-    def __init__(self, name, game):
-        self.name = name
-        self.num_games = 1
-        self.gdate = game.gdate
-        self.gyear = game.gdate.year
-        self.assn = game.assn
-        self.type = game.type
-        # self.role = game.role
-        # self.standard = game.standard
-        self.raw_row = game.raw_row
-
-    def __repr__(self):
-        return '<Event: {} ({})>'.format(self.name.encode('utf-8', 'ignore'), self.gdate.year)
+    conf.logger.info(f"Finished {__name__} in {(datetime.datetime.now() - start).total_seconds():.2f}s")
+    return officials, games
