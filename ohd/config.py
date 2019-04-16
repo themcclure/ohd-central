@@ -8,6 +8,7 @@ import json
 import logging
 import pygsheets
 import sqlalchemy
+import datetime
 import pandas as pd
 from pathlib import Path
 # from . import util
@@ -16,10 +17,11 @@ from pathlib import Path
 class Conf:
     def __init__(self):
         """
-        Initialize the config object and attach its runtime version to the module (maybe better to use static class instead?)
+        Initialize the config object and attach its runtime version to the module as a singleton
         """
         self.google = self.Google()
         self.runtime = self.Runtime()
+        self.caching = self.Cache()
         self.logging = self.Logging()
         self.logger = self.logging.logger
 
@@ -69,8 +71,15 @@ class Conf:
 
         label = 'Production'
 
-        cache_file = None
+    ##########
+    # SECTION: Cache
+    class Cache:
+        """
+        Class to manage the runtime cache, and helper functions
+        """
+        file = None
         cache = None
+        engine = None
         cache_only_mode = True  # Flag set to force cache values to be used
 
         # OHD Register sheet format (columns)
@@ -79,21 +88,94 @@ class Conf:
 
         # OHD Game History tab format (columns)
         history_tab_list = ['Date', 'Event Name', 'Event Location', 'Event Host', 'Home / High Seed', 'Visitor / Low Seed',
-                            'Association', 'Game Type', 'Position', '2nd Position', 'Software', 'Head Referee', 'Head NSO'
+                            'Association', 'Game Type', 'Position', '2nd Position', 'Software', 'Head Referee', 'Head NSO',
                             'Notes']
 
-        # OHD non-game information format (columns)
-        history_officials_data_list = ['Name']
+        # OHD Profile information format (columns)
+        history_officials_data_list = ['ID', 'Name_Preferred_raw', 'Pronoun_raw', 'Name_Derby', 'Name_Legal', 'Location_raw',
+                                       'Affiliated_League_raw', 'Cert_Ref_raw', 'Endorsements_Ref_raw', 'Cert_NSO_raw',
+                                       'Endorsements_NSO_raw', 'Officiating_Number', 'Email_Address', 'Phone_Number',
+                                       'Insurance_Derby', 'Association_Affiliations_raw']
 
         # cache / final data columns
         cache_defs = dict()
         # TODO: Index cols as well?
         cache_defs['metadata'] = {'cols': ['last_update'],
                                   'dates': ['last_update']}
-        cache_defs['register'] = {'cols': history_officials_data_list + ['last_update'],
-                                  'dates': ['last_update']}
-        cache_defs['game_data'] = {'cols': history_tab_list,
-                                   'dates': ['last_update']}
+        cache_defs['register'] = {'cols': reg_tab_list,
+                                  'dates': []}
+        cache_defs['officials'] = {'cols': history_officials_data_list,
+                                   'dates': []}
+        cache_defs['game_data'] = {'cols': ['off_id'] + history_tab_list,
+                                   'index': ['off_id', 'Date'],
+                                   'dates': ['Date']}
+
+        def init_cache(self):
+            """
+            Initalizes a connection to the cache, and creates an empty cache if there is no cache.
+            The environment will need to be initialized first.
+            """
+            try:
+                file = Path(self.file)
+            except TypeError:
+                # self.logger.error("Environment hasn't been configured, run init_env()")
+                raise Exception("Environment needs to be configured first")
+            engine = sqlalchemy.create_engine(f"sqlite:///{file}")
+            cache = dict()
+            self.engine = engine
+
+            # load each of the defined caches
+            cache_defs = self.cache_defs
+            for key in cache_defs:
+                conf.logger.debug(f"initializing cache:{key}")
+                if engine.has_table(key):
+                    conf.logger.debug(f"Getting {key} from database")
+                    cache[key] = pd.read_sql_table(key, engine, parse_dates=cache_defs[key]['dates'])
+                else:
+                    conf.logger.debug(f"Making {key} from scratch")
+                    df = pd.DataFrame(columns=cache_defs[key]['cols'])
+                    if 'index' in cache_defs[key]:
+                        conf.logger.debug(f"making index of: {cache_defs[key]['index']}")
+                        df = df.set_index(cache_defs[key]['index'])
+                    cache[key] = df
+            self.cache = cache
+            # conf.logger.debug("Pre-persist")
+            # self.persist_cache()
+            # conf.logger.debug("Post-persist")
+
+        def fetch(self, cache_key, item):
+            """
+            Queries the cache and returns an item from the cache, if it is found and if it is considered sufficicently current.
+            :param cache_key: the partition of the cache to search
+            :param item: the cache item key to fetch
+            :return: the cached item, if found, and None if no current item found
+            """
+            if item in self.cache[cache_key].index:
+                if conf.runtime.force_refresh:
+                    # ignore cache, force the loading of data
+                    return None
+                if self.cache_only_mode:
+                    # force the use of cached values
+                    return self.cache[cache_key].loc[item]
+                if cache_key == 'game_data':
+                    # game data recency isn't tracked in the metadata, so bypass the stale check
+                    return self.cache[cache_key].loc[item]
+                cache_expiry = datetime.datetime.now() - datetime.timedelta(days=conf.runtime.stale_days)
+                if self.cache['metadata'].loc[item]['last_update'] > cache_expiry:
+                    # return the cached value only if it's not "stale"
+                    return self.cache[cache_key].loc[item]
+            return None
+
+        def persist_cache(self):
+            """
+            Persists the in memory cache to disk.
+            """
+            # save each of the defined caches to disk
+            cache_defs = self.cache_defs
+            for key in cache_defs:
+                if not self.cache[key].empty:
+                    logging.debug(f"Persisting {key} to the cache")
+                    self.cache[key].to_sql(key, self.engine, if_exists='replace')
 
     ##########
     # SECTION: Logging
@@ -106,12 +188,13 @@ class Conf:
 
     ##########
     # SECTION: Helper functions
-    def init_env(self, env_name, data_dir, stale_days_override=None):
+    def init_env(self, env_name, data_dir="./data", with_keys=False, stale_days_override=None):
         """
         At runtime, initialize the Config object to match the runtime environment configuration.
         This should be the first thing when using the OHD module.
         :param env_name: The name of an environment to configure
-        :param data_dir: directory where data files will be looked for by default
+        :param data_dir: directory where data files will be looked for; by default "./data"
+        :param with_keys: if True, will import the API keys from the data_dir
         :param stale_days_override: An override for the stale_days parameter
         """
         self.logger.debug(f"Configuring runtime as: {env_name}")
@@ -149,13 +232,17 @@ class Conf:
             self.logger.error(f"Tried setting the runtime environment to {env_name} but that environment configuration was not found.")
             raise Exception(f"Configuration for the {env_name} environment cannot be found.")
 
+        # Action flags
+        if with_keys:
+            self.import_keys()
+
         # Overrides
         if stale_days_override:
             self.runtime.stale_days = stale_days_override
 
         # Initialize the cache
-        self.runtime.cache_file = data_path / f"ohd-cache-{env_name}.db"
-        self.init_cache()
+        self.caching.file = data_path / f"ohd-cache-{env_name}.db"
+        self.caching.init_cache()
 
     def import_keys(self, api_keyfile=None, service_account=None):
         """
@@ -178,30 +265,6 @@ class Conf:
             service_account = self.runtime.data_dir / 'service-account.json'
         self.runtime.cache_only_mode = False
         self.google.cred_file = service_account
-
-    def init_cache(self):
-        """
-        Initalizes a connection to the cache, and creates an empty cache if there is no cache.
-        The environment will need to be initialized first.
-        :return: a connection to the cache
-        """
-        try:
-            cache_file = Path(self.runtime.cache_file)
-        except TypeError:
-            self.logger.error("Environment hasn't been configured, run init_env()")
-            raise Exception("Environment needs to be configured first")
-        cache_engine = sqlalchemy.create_engine(f"sqlite:///{cache_file}")
-        cache = dict()
-        self.runtime.cache_engine = cache_engine
-
-        # load each of the defined caches
-        cache_defs = self.runtime.cache_defs
-        for key in cache_defs:
-            if cache_engine.has_table(key):
-                cache[key] = pd.read_sql_table(key, cache_engine, parse_dates=cache_defs[key]['dates'])
-            else:
-                cache[key] = pd.DataFrame(columns=cache_defs[key]['cols'])
-        self.runtime.cache = cache
 
 
 # runtime config object

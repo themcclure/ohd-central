@@ -111,3 +111,4 @@ data/keys.json
 
 # IDE
 /.idea
+/venv

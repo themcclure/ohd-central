@@ -170,9 +170,9 @@ if __name__ == '__main__':
             locations[l][3],  # Country
             l.encode('utf-8'),  # League name
             spread[0],  # number of officials
-            spread[1],  # numer of uncertified officials
-            spread[2],  # numer of low certified officials
-            spread[3],  # numer of high certified officials
+            spread[1],  # number of uncertified officials
+            spread[2],  # number of low certified officials
+            spread[3],  # number of high certified officials
         ]
     # print leaguepop
     import csv

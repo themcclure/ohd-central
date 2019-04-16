@@ -19,17 +19,17 @@ if __name__ == '__main__':
 
     ##########
     # setup the runtime environment
-    runtime_env = os.getenv('OHD_RUNTIME', 'Test')  # TODO: implement "ProdTest" and "TestTest" as envs
+    runtime_env = os.getenv('OHD_RUNTIME', 'ProdTest')
     conf = ohd.config.conf
-    conf.init_env(runtime_env, data_dir="./data")
-    conf.import_keys()
-    conf.logger.debug(f"Starting run in the {runtime_env} environment")
+    conf.init_env(runtime_env, with_keys=True)
+    # conf.import_keys()
+    conf.logger.info(f"Starting run in the {runtime_env} environment")
 
     ##########
     # load the register
     conf.logger.debug(f"About to load the {runtime_env} Register")
     reg = ohd.load_register()
-    conf.logger.debug(f"Loaded {len(reg)} records from the {runtime_env} Register")
+    conf.logger.info(f"Loaded {len(reg)} records from the {runtime_env} Register")
 
     # load each history doc from the Register
     # conf.logger.debug(f"Attempting to load {len(reg)} officials")
@@ -38,9 +38,15 @@ if __name__ == '__main__':
     # conf.logger.debug(f"Loaded {len(officials)} officials in {(datetime.datetime.now() - last_checkpoint).total_seconds():.2f}")
 
     # ohd.official.load_history('3')  # force an error since no google ID exists
-    ohd.official.load_history('1kG9QTdus7LbpZP-3L9fNvwQ0nVpUUXyw7m7hpKSBH-E')  # force an error since we don't have permission to this google ID
+    # ohd.official.load_history_doc('1kG9QTdus7LbpZP-3L9fNvwQ0nVpUUXyw7m7hpKSBH-E')  # force an error since we don't have permission to this google ID
+    load_threshold = 20
+    loaded_from_google = 0
     for did in reg['History ID']:
-        ohd.official.load_history(did)
+        o, g, source = ohd.official.load_history_doc(did)
+        if source == 'sheet':
+            loaded_from_google += 1
+            if loaded_from_google > load_threshold:
+                break
 
     ##########
     # Finishing up and logging info

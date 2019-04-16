@@ -10,7 +10,7 @@ from . import util
 import datetime
 import pandas as pd
 # import pkg_resources as pr
-from pathlib import Path
+# from pathlib import Path
 
 
 # TODO: add a load time to each of the doc process requests into config.google.runtime_api or _cache
@@ -35,8 +35,9 @@ def load_register(doc_id=None, tab_name=None, force_refresh=False):
         reg_tab = conf.runtime.reg_tab_name
     needs_refresh = force_refresh
 
+    # TODO: turn this into a cache helper function, returns (object from cache, cache_item_stale) tuple
     # load the Register from cache
-    cache = conf.runtime.cache
+    cache = conf.caching.cache
     register = cache['register']
     if register.empty:
         needs_refresh = True  # flag for refresh if the cache is not present
@@ -56,10 +57,11 @@ def load_register(doc_id=None, tab_name=None, force_refresh=False):
     if needs_refresh and cred_file is not None and cred_file.exists():
         client = util.authenticate_with_google()  # initialize the API connection to Google Docs
         reg_wb = client.open_by_key(reg_doc_id)
-        register = util.read_tab_as_df(reg_wb, reg_tab, num_columns=len(conf.runtime.reg_tab_list))
-        conf.runtime.cache['metadata'] = pd.DataFrame({'last_update': datetime.datetime.now()}, index=['Register'])  # Refreshing metadata after load
-        conf.runtime.cache['register'] = register  # update the cache
-        conf.logger.debug(f"Refreshing Register and saving {len(register)} to {conf.runtime.cache_file}")
+        register = util.read_tab_as_df(reg_wb, reg_tab, num_columns=len(conf.caching.reg_tab_list))
+        conf.caching.cache['register'] = register  # update the register cache in-memory
+        conf.caching.cache['metadata'] = pd.DataFrame({'last_update': datetime.datetime.now()}, index=['Register'])  # update the metadata cache in-memory
+        conf.caching.persist_cache()  # update the in-memory cache on disk
+        conf.logger.debug(f"Refreshing Register and saving {len(register)} to {conf.caching.file}")
         time_to_load = datetime.datetime.now() - last_checkpoint
         conf.google.runtime_api.append(time_to_load)
         conf.logger.debug(f"Loading the Register from doc took {time_to_load.total_seconds():.2f}s")
