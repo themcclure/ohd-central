@@ -130,7 +130,7 @@ class Conf:
                 conf.logger.debug(f"initializing cache:{key}")
                 if engine.has_table(key):
                     conf.logger.debug(f"Getting {key} from database")
-                    cache[key] = pd.read_sql_table(key, engine, parse_dates=cache_defs[key]['dates'])
+                    cache[key] = pd.read_sql_table(key, engine, index_col='index', parse_dates=cache_defs[key]['dates'])
                 else:
                     conf.logger.debug(f"Making {key} from scratch")
                     df = pd.DataFrame(columns=cache_defs[key]['cols'])
